@@ -273,7 +273,9 @@ def verify_and_notify_new_payload(self: ExecutionEngine,
     Raise an exception if ``execution_payload`` is not valid with respect to ``self.execution_state``. 
     Returns the list of transactions in the inclusion list that remain valid after executing the payload. That is
     it is guaranteed that the transactions returned in the list can be executed in the exact order starting from the 
-    current ``self.execution_state``.
+    current ``self.execution_state``. This check also includes that the transactions still use less than
+    ``MAX_GAS_PER_INCLUSION_LIST``, since the gas usage may have been different if the transaction was 
+    executed before or after slot N
     """
     assert self.is_valid_block_hash(new_payload_request.execution_payload)
     return self.notify_new_payload(new_payload_request.execution_payload)
