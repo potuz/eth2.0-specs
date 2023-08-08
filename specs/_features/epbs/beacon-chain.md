@@ -60,6 +60,7 @@ For a further introduction please refer to this [ethresear.ch article](https://e
 | Name | Value | 
 | - | - | 
 | MAX_TRANSACTIONS_PER_INCLUSION_LIST | `2**4` (=16) | 
+| MAX_GAS_PER_INCLUSION_LIST | `2**20` (=1,048,576) |
 
 ## Containers
 
@@ -124,6 +125,7 @@ class ExecutionPayload(Container):
     transactions: List[Transaction, MAX_TRANSACTIONS_PER_PAYLOAD]
     withdrawals: List[Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD]
     builder_index: uint64 # [New in ePBS]
+    value: Gwei # [New in ePBS]
 ```
 
 #### `ExecutionPayloadHeader`
@@ -148,6 +150,7 @@ class ExecutionPayloadHeader(Container):
     transactions_root: Root
     withdrawals_root: Root
     builder_index: uint64 # [New in ePBS]
+    value: Gwei # [New in ePBS]
 ```
 
 #### `BeaconBlockBody`
@@ -232,41 +235,101 @@ The post-state corresponding to a pre-state `state` and a signed block `signed_b
 
 The post-state corresponding to a pre-state `state` and a signed execution payload `signed_execution_payload` is defined as `process_execution_payload(state, signed_execution_payload)`. State transitions that trigger an unhandled exception (e.g. a failed `assert` or an out-of-range list access) are considered invalid. State transitions that cause a `uint64` overflow or underflow are also considered invalid. 
 
+### Execution engine
+
+#### Request data
+
+##### New `NewInclusionListRequest`
+
+```python
+@dataclass
+class NewInclusionListRequest(object):
+    inclusion_list: List[Transaction, MAX_TRANSACTIONS_PER_INCLUSION_LIST]
+```
+  
+#### Engine APIs
+
+#### Modified `notify_new_payload`
+*Note*: the function notify new payload is modified to raise an exception if the payload is not valid, and to return the list of transactions that remain valid in the inclusion list
+
+```python
+def notify_new_payload(self: ExecutionEngine, execution_payload: ExecutionPayload) -> List[Transaction, MAX_TRANSACTIONS_PER_INCLUSION_LIST]:
+    """
+    Raise an exception if ``execution_payload`` is not valid with respect to ``self.execution_state``. 
+    Returns the list of transactions in the inclusion list that remain valid after executing the payload. That is
+    it is guaranteed that the transactions returned in the list can be executed in the exact order starting from the 
+    current ``self.execution_state``.
+    """
+    ...
+```
+
+#### Modified `verify_and_notify_new_payload`
+*Note*: the function `verify_and_notify_new_payload` is modified so that it returns the list of transactions that remain valid in the forward inclusion list. It raises an exception if the payload is not valid. 
+
+```python
+def verify_and_notify_new_payload(self: ExecutionEngine,
+                                  new_payload_request: NewPayloadRequest) -> List[Transaction, MAX_TRANSACTIONS_PER_INCLUSION_LIST]:
+    """
+    Raise an exception if ``execution_payload`` is not valid with respect to ``self.execution_state``. 
+    Returns the list of transactions in the inclusion list that remain valid after executing the payload. That is
+    it is guaranteed that the transactions returned in the list can be executed in the exact order starting from the 
+    current ``self.execution_state``.
+    """
+    assert self.is_valid_block_hash(new_payload_request.execution_payload)
+    return self.notify_new_payload(new_payload_request.execution_payload)
+```
+
+#### New `notify_new_inclusion_list`
+
+```python
+def notify_new_inclusion_list(self: ExecutionEngine,
+                              inclusion_list_request: NewInclusionListRequest) -> bool:
+    """
+    Return ``True`` if and only if the transactions in the inclusion list can be succesfully executed
+    starting from the current ``self.execution_state`` and that they consume less or equal than
+    ```MAX_GAS_PER_INCLUSION_LIST``.
+    """
+    ...
+```
+
 ### Block processing
 
 *Note*: the function `process_block` is modified to only process the consensus block. The full state-transition process is broken into separate functions, one to process a `BeaconBlock` and another to process a `SignedExecutionPayload`.  
 
+Notice that `process_tx_inclusion_list` needs to be processed before the payload header since the former requires to check the last committed payload header. 
+
+
 ```python
 def process_block(state: BeaconState, block: BeaconBlock) -> None:
     process_block_header(state, block)
+    process_tx_inclusion_list(state, block, EXECUTION_ENGINE) # [New in ePBS]
     process_execution_payload_header(state, block.body.execution_payload_header) # [Modified in ePBS]
     # Removed process_withdrawal in ePBS is processed during payload processing [Modified in ePBS]
     process_randao(state, block.body)
     process_eth1_data(state, block.body)
     process_operations(state, block.body)  # [Modified in ePBS]
     process_sync_aggregate(state, block.body.sync_aggregate)
-    process_tx_inclusion_list(state, block) # [New in ePBS]
 ```
 
 #### New `update_tx_inclusion_lists`
 
 ```python
-def update_tx_inclusion_lists(state: BeaconState, payload: ExecutionPayload) -> None:
+def update_tx_inclusion_lists(state: BeaconState, payload: ExecutionPayload, engine: ExecutionEngine, inclusion_list: List[Transaction, MAX_TRANSACTION_PER_INCLUSION_LIST]) -> None:
     old_transactions = payload.transactions[:len(state.previous_tx_inclusion_list)]
     assert state.previous_tx_inclusion_list == old_transactions
 
-    new_transactions = payload.transactions[len(state.previous_tx_inclusion_list):]
-    state.previous_tx_inclusion_list = [tx for tx in state.current_tx_inclusion_list if x not in new_transactions]
-
-    #TODO: check validity of the IL for the next block, requires engine changes
+    state.previous_tx_inclusion_list = inclusion_list
 ```
+
 #### New `verify_execution_payload_header_signature`
 
 ```python
 def verify_execution_payload_header_signature(state: BeaconState, signed_header: SignedExecutionPayloadHeader) -> bool:
     builder = state.builders[signed_header.message.builder_index]
     signing_root = compute_signing_root(signed_header.message, get_domain(state, DOMAIN_BEACON_BUILDER))
-    return bls.Verify(builder.pubkey, signing_root, signed_header.signature)
+    if not bls.Verify(builder.pubkey, signing_root, signed_header.signature):
+        return False
+    return 
 ```
 
 #### New `verify_execution_payload_signature`
@@ -308,10 +371,10 @@ def process_execution_payload(state: BeaconState, signed_envelope: SignedExecuti
     hash = hash_tree_root(payload)
     previous_hash = hash_tree_root(state.current_signed_execution_payload_header.message)
     assert hash == previous_hash
-    # Verify and update the proposers inclusion lists
-    update_tx_inclusion_lists(state, payload)
     # Verify the execution payload is valid
-    assert execution_engine.verify_and_notify_new_payload(NewPayloadRequest(execution_payload=payload))
+    inclusion_list = execution_engine.verify_and_notify_new_payload(NewPayloadRequest(execution_payload=payload))
+    # Verify and update the proposers inclusion lists
+    update_tx_inclusion_lists(state, payload, inclusion_list)
     # Process Withdrawals in the payload
     process_withdrawals(state, payload)
     # Cache the execution payload header
@@ -323,9 +386,14 @@ def process_execution_payload(state: BeaconState, signed_envelope: SignedExecuti
 #### New `process_tx_inclusion_list`
 
 ```python
-def process_tx_inclusion_list(state: BeaconState, block: BeaconBlock) -> None:
-    # TODO: cap gas usage, comunicate with the engine. 
+def process_tx_inclusion_list(state: BeaconState, block: BeaconBlock, execution_engine: ExecutionEngine) -> None:
+    inclusion_list = block.body.tx_inclusion_list
+    # Verify that the list is empty if the parent consensus block did not contain a payload
+    if state.current_signed_execution_payload_header.message != state.latest_execution_payload_header:
+        assert not inclusion_list
+        return
+    assert notify_new_inclusion_list(execution_engine, inclusion_list)
     state.previous_tx_inclusion_list = state.current_tx_inclusion_list
-    state.current_tx_inclusion_list = block.body.tx_inclusion_list
+    state.current_tx_inclusion_list = inclusion_list
 ```
 
