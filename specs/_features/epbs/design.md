@@ -14,4 +14,11 @@ ePBS introduces forward inclusion lists for proposers to guarantee censor resist
 
 There are some concerns about proposers using IL for data availability, since the CL will have to keep the blocks somewhere to reconstruct the beacon state. A proposer may freely include a IL in a block by including transactions and invalidating them all in the payload for the same slot N. There is a nice design by @vbuterin that instead of committing the IL to state, allows the txs to go on a sidecar together with a signed summary. The builder then needs to include the signed summary and a block that satisfies it. This design trades complexity for safety under the free DA issue of the above. 
 
+## Builders
 
+There is a new entity `Builder` that is a glorified validator required to have a higher stake and required to sign when producing execution payloads. 
+
+- There is a new list in the `BeaconState` that contains all the registered builders
+- Builders are also validators (otherwise their staked capital depreciates)
+- We onboard builders by simply turning validators into builders if they achieve the necessary minimum balance (this way we avoid two forks to onboard builders and keep the same deposit flow, avoid builders to skip the entry churn)
+- The unit `ValidatorIndex` is used for both indexing validators and builders, after all, builders are validators. Throughout the code, we often see checks of the form `index < len(state.validators)`, thus we consider a `ValidatorIndex(len(state.validators))` to correspond to the first builder, that is `state.builders[0]`. 

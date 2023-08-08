@@ -24,6 +24,14 @@ At any given slot, the status of the blockchain's head may be either
 
 For a further introduction please refer to this [ethresear.ch article](https://ethresear.ch/t/payload-timeliness-committee-ptc-an-epbs-design/16054)
 
+## Configuration
+
+### Time parameters
+
+| Name | Value | Unit | Duration |
+| - | - | :-: | :-: |
+| `SECONDS_PER_SLOT` | `uint64(16)` | seconds | 16 seconds # (Modified in ePBS) |
+
 ## Preset
 
 ### Misc
@@ -64,7 +72,7 @@ For a further introduction please refer to this [ethresear.ch article](https://e
 
 ## Containers
 
-### New Containers
+### New containers
 
 #### `Builder`
 
@@ -73,6 +81,7 @@ class Builder(Container):
     pubkey: BLSPubkey
     withdrawal_address: ExecutionAddress  # Commitment to pubkey for withdrawals
     effective_balance: Gwei  # Balance at stake
+    slashed: boolean
     exit_epoch: Epoch
     withdrawable_epoch: Epoch  # When builder can withdraw funds
 ```
@@ -101,7 +110,7 @@ class SignedExecutionPayloadEnvelope(Container):
     signature: BLSSignature
 ```
 
-### Modified Containers
+### Modified containers
 
 #### `ExecutionPayload`
 
@@ -226,6 +235,163 @@ class BeaconState(Container):
     current_tx_inclusion_list: List[Transaction, MAX_TRANSACTIONS_PER_INCLUSION_LIST] # [New in ePBS]
     current_signed_execution_payload_header: SignedExecutionPayloadHeader # [New in ePBS]
 ```
+## Helper functions
+
+### Predicates
+
+#### Modified `is_active_builder`
+
+```python
+def is_active_builder(builder: Builder, epoch: Epoch) -> bool:
+    return epoch < builder.exit_epoch
+```
+### Misc
+
+#### Modified `compute_proposer_index`
+*Note*: `compute_proposer_index` is modified to account for builders being validators
+
+TODO: actually do the sampling proportional to effective balance
+
+### Beacon state accessors
+
+#### Modified `get_active_validator_indices`
+
+```python
+def get_active_validator_indices(state: BeaconState, epoch: Epoch) -> Sequence[ValidatorIndex]:
+    """
+    Return the sequence of active validator indices at ``epoch``.
+    """
+    builder_indices = [ValidatorIndex(len(state.validators) + i) for i,b in enumerate(state.builders) if is_active_builder(b,epoch)] 
+    return [ValidatorIndex(i) for i, v in enumerate(state.validators) if is_active_validator(v, epoch)] + builder_indices
+```
+
+#### New `get_effective_balance`
+
+```python
+def get_effective_balance(state: BeaconState, index: ValidatorIndex) -> Gwei:
+    """
+    Return the effective balance for the validator or the builder indexed by ``index``
+    """
+    if index < len(state.validators):
+        return state.validators[index].effective_balance
+    return state.builders[index-len(state.validators)].effective_balance
+```
+
+#### Modified `get_total_balance`
+
+```python
+def get_total_balance(state: BeaconState, indices: Set[ValidatorIndex]) -> Gwei:
+    """
+    Return the combined effective balance of the ``indices``.
+    ``EFFECTIVE_BALANCE_INCREMENT`` Gwei minimum to avoid divisions by zero.
+    Math safe up to ~10B ETH, after which this overflows uint64.
+    """
+    return Gwei(max(EFFECTIVE_BALANCE_INCREMENT, sum([get_effective_balance(state, index) for index in indices])))
+```
+
+### Beacon state mutators
+
+#### Modified `increase_balance`
+
+```python
+def increase_balance(state: BeaconState, index: ValidatorIndex, delta: Gwei) -> None:
+    """
+    Increase the validator balance at index ``index`` by ``delta``.
+    """
+    if index < len(state.validators):
+        state.balances[index] += delta
+        return
+    state.builder_balances[index-len(state.validators)] += delta
+```
+
+#### Modified `decrease_balance`
+
+```python
+def decrease_balance(state: BeaconState, index: ValidatorIndex, delta: Gwei) -> None:
+    """
+    Decrease the validator balance at index ``index`` by ``delta``, with underflow protection.
+    """
+    if index < len(state.validators)
+        state.balances[index] = 0 if delta > state.balances[index] else state.balances[index] - delta
+        return
+    index -= len(state.validators)
+    state.builder_balances[index] = 0 if delta > state.builder_balances[index] else state.builder_balances[index] - delta
+```
+
+#### Modified `initiate_validator_exit`
+
+```python
+def initiate_validator_exit(state: BeaconState, index: ValidatorIndex) -> None:
+    """
+    Initiate the exit of the validator with index ``index``.
+    """
+    # Notice that the local variable ``validator`` may refer to a builder. Also that it continues defined outside
+    # its declaration scope. This is valid Python.
+    if index < len(state.validators):
+        validator = state.validators[index]
+    else:
+        validator = state.builders[index - len(state.validators)]
+
+    # Return if validator already initiated exit
+    if validator.exit_epoch != FAR_FUTURE_EPOCH:
+        return
+
+    # Compute exit queue epoch
+    exit_epochs = [v.exit_epoch for v in state.validators + state.builders if v.exit_epoch != FAR_FUTURE_EPOCH]
+    exit_queue_epoch = max(exit_epochs + [compute_activation_exit_epoch(get_current_epoch(state))])
+    exit_queue_churn = len([v for v in state.validators + state.builders if v.exit_epoch == exit_queue_epoch])
+    if exit_queue_churn >= get_validator_churn_limit(state):
+        exit_queue_epoch += Epoch(1)
+
+    # Set validator exit epoch and withdrawable epoch
+    validator.exit_epoch = exit_queue_epoch
+    validator.withdrawable_epoch = Epoch(validator.exit_epoch + MIN_VALIDATOR_WITHDRAWABILITY_DELAY) # TODO: Do we want to differentiate builders here?
+```
+
+#### New `proposer_slashing_amount`
+
+```python
+def proposer_slashing_amount(slashed_index: ValidatorIndex, effective_balance: Gwei):
+    return min(MAX_EFFECTIVE_BALANCE, effective_balance) // MIN_SLASHING_PENALTY_QUOTIENT
+```
+
+#### Modified `slash_validator`
+
+```python
+def slash_validator(state: BeaconState,
+                    slashed_index: ValidatorIndex,
+                    proposer_slashing: bool,
+                    whistleblower_index: ValidatorIndex=None) -> None:
+    """
+    Slash the validator with index ``slashed_index``.
+    """
+    epoch = get_current_epoch(state)
+    initiate_validator_exit(state, slashed_index)
+    # Notice that the local variable ``validator`` may refer to a builder. Also that it continues defined outside
+    # its declaration scope. This is valid Python.
+    if index < len(state.validators):
+        validator = state.validators[slashed_index]
+    else:
+        validator = state.builders[slashed_index - len(state.validators)]
+    validator.slashed = True
+    validator.withdrawable_epoch = max(validator.withdrawable_epoch, Epoch(epoch + EPOCHS_PER_SLASHINGS_VECTOR))
+    state.slashings[epoch % EPOCHS_PER_SLASHINGS_VECTOR] += validator.effective_balance
+    if proposer_slashing:
+        decrease_balance(state, slashed_index, proposer_slashing_amount(slashed_index, validator.effective_balance))
+    else: 
+        decrease_balance(state, slashed_index, validator.effective_balance // MIN_SLASHING_PENALTY_QUOTIENT)
+
+    # Apply proposer and whistleblower rewards
+    proposer_index = get_beacon_proposer_index(state)
+    if whistleblower_index is None:
+        whistleblower_index = proposer_index
+    whistleblower_reward = Gwei(max(MAX_EFFECTIVE_BALANCE, validator.effective_balance) // WHISTLEBLOWER_REWARD_QUOTIENT)
+    proposer_reward = Gwei(whistleblower_reward // PROPOSER_REWARD_QUOTIENT)
+    increase_balance(state, proposer_index, proposer_reward)
+    increase_balance(state, whistleblower_index, Gwei(whistleblower_reward - proposer_reward))
+```
+
+
 
 ## Beacon chain state transition function
 
@@ -361,8 +527,6 @@ def process_execution_payload_header(state: BeaconState, signed_header: SignedEx
 
 #### Modified `process_execution_payload`
 *Note*: `process_execution_payload` is now an independent check in state transition. It is called when importing a signed execution payload proposed by the builder of the current slot.
-
-TODO: Deal with the case when the payload becomes invalid because of the forward inclusion list.
 
 ```python
 def process_execution_payload(state: BeaconState, signed_envelope: SignedExecutionPayloadEnvelope, execution_engine: ExecutionEngine) -> None:
