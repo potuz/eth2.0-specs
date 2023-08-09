@@ -392,7 +392,6 @@ def slash_validator(state: BeaconState,
 ```
 
 
-
 ## Beacon chain state transition function
 
 *Note*: state transition is fundamentally modified in ePBS. The full state transition is broken in two parts, first importing a signed block and then importing an execution payload. 
@@ -439,9 +438,7 @@ def verify_and_notify_new_payload(self: ExecutionEngine,
     Raise an exception if ``execution_payload`` is not valid with respect to ``self.execution_state``. 
     Returns the list of transactions in the inclusion list that remain valid after executing the payload. That is
     it is guaranteed that the transactions returned in the list can be executed in the exact order starting from the 
-    current ``self.execution_state``. This check also includes that the transactions still use less than
-    ``MAX_GAS_PER_INCLUSION_LIST``, since the gas usage may have been different if the transaction was 
-    executed before or after slot N
+    current ``self.execution_state``. 
     """
     assert self.is_valid_block_hash(new_payload_request.execution_payload)
     return self.notify_new_payload(new_payload_request.execution_payload)
@@ -454,7 +451,7 @@ def notify_new_inclusion_list(self: ExecutionEngine,
                               inclusion_list_request: NewInclusionListRequest) -> bool:
     """
     Return ``True`` if and only if the transactions in the inclusion list can be succesfully executed
-    starting from the current ``self.execution_state`` and that they consume less or equal than
+    starting from the current ``self.execution_state`` and that their total gas limit is less or equal than
     ```MAX_GAS_PER_INCLUSION_LIST``.
     """
     ...
