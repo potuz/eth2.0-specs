@@ -231,6 +231,8 @@ class BeaconState(Container):
     # PBS
     builders: List[Builder, BUILDER_REGISTRY_LIMIT] # [New in ePBS]
     builder_balances: List[Gwei, BUILDER_REGISTRY_LIMIT] # [New in ePBS]
+    previous_epoch_builder_participation: List[ParticipationFlags, BUILDER_REGISTRY_LIMIT] # [New in ePBS]
+    current_epoch_builder_participation: List[ParticipationFlags, BUILDER_REGISTRY_LIMIT] # [New in ePBS]
     previous_tx_inclusion_list: List[Transaction, MAX_TRANSACTIONS_PER_INCLUSION_LIST] # [New in ePBS]
     current_tx_inclusion_list: List[Transaction, MAX_TRANSACTIONS_PER_INCLUSION_LIST] # [New in ePBS]
     current_signed_execution_payload_header: SignedExecutionPayloadHeader # [New in ePBS]
@@ -239,12 +241,51 @@ class BeaconState(Container):
 
 ### Predicates
 
-#### Modified `is_active_builder`
+#### New `is_active_builder`
 
 ```python
 def is_active_builder(builder: Builder, epoch: Epoch) -> bool:
     return epoch < builder.exit_epoch
 ```
+
+#### New `is_slashable_builder`
+
+```python
+def is_slashable_builder(builder: Builder, epoch: Epoch) -> bool:
+    """
+    Check if ``builder`` is slashable.
+    """
+    return (not validator.slashed) and (epoch < builder.withdrawable_epoch)
+```
+
+#### New `is_active_validator_at_index`
+
+```python
+def is_active_validator_at_index(state: BeaconState, index: ValidatorIndex, epoch: Epoch) -> bool:
+    if index < len(state.validators):
+        return is_active_validator(state.validators[index], epoch)
+    return is_active_builder(state.builders[index-len(state.validators)], epoch)
+```
+
+#### Modified `is_valid_indexed_attestation`
+
+```python
+def is_valid_indexed_attestation(state: BeaconState, indexed_attestation: IndexedAttestation) -> bool:
+    """
+    Check if ``indexed_attestation`` is not empty, has sorted and unique indices and has a valid aggregate signature.
+    """
+    # Verify indices are sorted and unique
+    indices = indexed_attestation.attesting_indices
+    if len(indices) == 0 or not indices == sorted(set(indices)):
+        return False
+    # Verify aggregate signature
+    pubkeys = [state.validators[i].pubkey if i < len(state.validators) else state.builders[i - len(state.validators)].pubkey for i in indices]
+    domain = get_domain(state, DOMAIN_BEACON_ATTESTER, indexed_attestation.data.target.epoch)
+    signing_root = compute_signing_root(indexed_attestation.data, domain)
+    return bls.FastAggregateVerify(pubkeys, signing_root, indexed_attestation.signature)
+```
+
+
 ### Misc
 
 #### Modified `compute_proposer_index`
@@ -288,6 +329,96 @@ def get_total_balance(state: BeaconState, indices: Set[ValidatorIndex]) -> Gwei:
     """
     return Gwei(max(EFFECTIVE_BALANCE_INCREMENT, sum([get_effective_balance(state, index) for index in indices])))
 ```
+
+#### Modified `get_next_sync_committee_indices`
+
+*TODO*: make the shuffling actually weighted by the builder's effective balance
+
+```python
+def get_next_sync_committee_indices(state: BeaconState) -> Sequence[ValidatorIndex]:
+    """
+    Return the sync committee indices, with possible duplicates, for the next sync committee.
+    """
+    epoch = Epoch(get_current_epoch(state) + 1)
+
+    MAX_RANDOM_BYTE = 2**8 - 1
+    active_validator_indices = get_active_validator_indices(state, epoch)
+    active_validator_count = uint64(len(active_validator_indices))
+    seed = get_seed(state, epoch, DOMAIN_SYNC_COMMITTEE)
+    i = 0
+    sync_committee_indices: List[ValidatorIndex] = []
+    while len(sync_committee_indices) < SYNC_COMMITTEE_SIZE:
+        shuffled_index = compute_shuffled_index(uint64(i % active_validator_count), active_validator_count, seed)
+        candidate_index = active_validator_indices[shuffled_index]
+        random_byte = hash(seed + uint_to_bytes(uint64(i // 32)))[i % 32]
+        if candidate_index >= len(state.validators):
+            sync_commitee_indices.append(candidate_index)
+        else:
+            effective_balance = state.validators[candidate_index].effective_balance
+            if effective_balance * MAX_RANDOM_BYTE >= MAX_EFFECTIVE_BALANCE * random_byte:
+                sync_committee_indices.append(candidate_index)
+        i += 1
+    return sync_committee_indices
+```
+
+#### Modified `get_next_sync_committee`
+
+```python
+def get_next_sync_committee(state: BeaconState) -> SyncCommittee:
+    """
+    Return the next sync committee, with possible pubkey duplicates.
+    """
+    indices = get_next_sync_committee_indices(state)
+    pubkeys = [state.validators[index].pubkey if index < len(state.validators) else state.builders[index-len(state.validators)] for index in indices]
+    aggregate_pubkey = eth_aggregate_pubkeys(pubkeys)
+    return SyncCommittee(pubkeys=pubkeys, aggregate_pubkey=aggregate_pubkey)
+```
+
+#### Modified `get_unslashed_participating_indices`
+
+```python
+def get_unslashed_participating_indices(state: BeaconState, flag_index: int, epoch: Epoch) -> Set[ValidatorIndex]:
+    """
+    Return the set of validator indices that are both active and unslashed for the given ``flag_index`` and ``epoch``.
+    """
+    assert epoch in (get_previous_epoch(state), get_current_epoch(state))
+    if epoch == get_current_epoch(state):
+        epoch_participation = state.current_epoch_participation
+        epoch_builder_participation = state.current_epoch_builder_participation
+    else:
+        epoch_participation = state.previous_epoch_participation
+        epoch_builder_participation = state.previous_epoch_builder_participation
+    active_validator_indices = get_active_validator_indices(state, epoch)
+    participating_indices = [i for i in active_validator_indices if (has_flag(epoch_participation[i], flag_index) if i < len(state.validators) else has_flag(epoch_builder_participation[i-len(state.validators)], flag_index))]
+    return set(filter(lambda index: not state.validators[index].slashed if index < len(state.validators) else not state.builders[index-len(state.validators)].slashed, participating_indices))
+```
+
+#### Modified `get_flag_index_deltas`
+
+```python
+def get_flag_index_deltas(state: BeaconState, flag_index: int) -> Tuple[Sequence[Gwei], Sequence[Gwei]]:
+    """
+    Return the deltas for a given ``flag_index`` by scanning through the participation flags.
+    """
+    rewards = [Gwei(0)] * (len(state.validators) + len(state.builders))
+    penalties = [Gwei(0)] * (len(state.validators) + len(state.builders)
+    previous_epoch = get_previous_epoch(state)
+    unslashed_participating_indices = get_unslashed_participating_indices(state, flag_index, previous_epoch)
+    weight = PARTICIPATION_FLAG_WEIGHTS[flag_index]
+    unslashed_participating_balance = get_total_balance(state, unslashed_participating_indices)
+    unslashed_participating_increments = unslashed_participating_balance // EFFECTIVE_BALANCE_INCREMENT
+    active_increments = get_total_active_balance(state) // EFFECTIVE_BALANCE_INCREMENT
+    for index in get_eligible_validator_indices(state):
+        base_reward = get_base_reward(state, index)
+        if index in unslashed_participating_indices:
+            if not is_in_inactivity_leak(state):
+                reward_numerator = base_reward * weight * unslashed_participating_increments
+                rewards[index] += Gwei(reward_numerator // (active_increments * WEIGHT_DENOMINATOR))
+        elif flag_index != TIMELY_HEAD_FLAG_INDEX:
+            penalties[index] += Gwei(base_reward * weight // WEIGHT_DENOMINATOR)
+    return rewards, penalties
+```
+
 
 ### Beacon state mutators
 
@@ -399,6 +530,92 @@ def slash_validator(state: BeaconState,
 The post-state corresponding to a pre-state `state` and a signed block `signed_block` is defined as `state_transition(state, signed_block)`. State transitions that trigger an unhandled exception (e.g. a failed `assert` or an out-of-range list access) are considered invalid. State transitions that cause a `uint64` overflow or underflow are also considered invalid. 
 
 The post-state corresponding to a pre-state `state` and a signed execution payload `signed_execution_payload` is defined as `process_execution_payload(state, signed_execution_payload)`. State transitions that trigger an unhandled exception (e.g. a failed `assert` or an out-of-range list access) are considered invalid. State transitions that cause a `uint64` overflow or underflow are also considered invalid. 
+
+### Modified `verify_block_signature`
+
+```python
+def verify_block_signature(state: BeaconState, signed_block: SignedBeaconBlock) -> bool:
+    index = signed_block.message.proposer_index
+    if index < len(state.validators):
+        proposer = state.validators[index]
+    else:
+        proposer = state.builders[index-len(state.validators)]
+    signing_root = compute_signing_root(signed_block.message, get_domain(state, DOMAIN_BEACON_PROPOSER))
+    return bls.Verify(proposer.pubkey, signing_root, signed_block.signature)
+```
+
+### Epoch processing
+
+#### Modified `process_epoch`
+
+```python
+def process_epoch(state: BeaconState) -> None:
+    process_justification_and_finalization(state)
+    process_inactivity_updates(state)
+    process_rewards_and_penalties(state)
+    process_registry_updates(state)
+    process_slashings(state)
+    process_eth1_data_reset(state)
+    process_effective_balance_updates(state)
+    process_slashings_reset(state)
+    process_randao_mixes_reset(state)
+    process_historical_summaries_update(state)
+    process_participation_flag_updates(state) # [Modified in ePBS]
+    process_sync_committee_updates(state)
+    process_builder_updates(state) # [New in ePBS]
+```
+
+#### Modified `process_participation_flag_updates`
+
+```python
+def process_participation_flag_updates(state: BeaconState) -> None:
+    state.previous_epoch_participation = state.current_epoch_participation
+    state.current_epoch_participation = [ParticipationFlags(0b0000_0000) for _ in range(len(state.validators))]
+    state.previous_epoch_builder_participation = state.current_epoch_builder_participation
+    state.current_epoch_builder_participation = [ParticipationFlags(0b0000_0000) for _ in range(len(state.builders))]
+```
+
+#### Rewards and penalties
+
+##### Helpers
+
+*Note*: the function `get_base_reward` is modified to account for builders.
+
+```python
+def get_base_reward(state: BeaconState, index: ValidatorIndex) -> Gwei:
+    """
+    Return the base reward for the validator defined by ``index`` with respect to the current ``state``.
+    """
+    if index < len(state.validators):
+        validator = state.validators[index]
+    else:
+        validator = state.builders[index-len(state.validators)]
+    increments = validator.effective_balance // EFFECTIVE_BALANCE_INCREMENT
+    return Gwei(increments * get_base_reward_per_increment(state))
+```
+
+*Note*: The function `is_active_validator_at_index` is new
+
+```python
+def is_active_validator_at_index(state: BeaconState, index: ValidatorIndex) -> Bool:
+    if index < len(state.validators):
+        validator = state.validators[index]
+    else:
+        validator = state
+
+```
+
+*Note*: The function `get_eligible_validator_indices` is modified to account for builders.
+
+```python
+def get_eligible_validator_indices(state: BeaconState) -> Sequence[ValidatorIndex]:
+    previous_epoch = get_previous_epoch(state)
+    return [
+        ValidatorIndex(index) for index, v in enumerate(state.validators + state.builders)
+        if is_active_validator(v, previous_epoch) or (v.slashed and previous_epoch + 1 < v.withdrawable_epoch)
+    ]
+```
+
 
 ### Execution engine
 
