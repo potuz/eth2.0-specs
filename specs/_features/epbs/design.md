@@ -2,23 +2,22 @@
 
 ## Inclusion lists
 
-ePBS introduces forward inclusion lists for proposers to guarantee censor resistanship of the network. They are implemented as follows
+ePBS introduces forward inclusion lists for proposers to guarantee censor resistanship of the network. We follow the design described in [this post](https://ethresear.ch/t/no-free-lunch-a-new-inclusion-list-design/16389).
 
-- Proposer for slot N submits a signed block that includes some transactions to be included at the beginning of slot N+1. 
-- Validators for slot N will consider the block invalid if those transactions are not executable at the start of slot N (this makes it impossible to put transactions that are only valid at slot N+1 for example, but still the proposer can protect from unbundling/replaying by binding the transaction to only be valid up to N+1 for example, because the block for N has already been committed by the builder). 
-- The IL is put in the `BeaconState`. 
-- The builder for slot N reveals its payload. This payload also contains a `beacon_state_root`.  Validators for this slot will remove from the IL any transaction that was already executed during slot N (for example the builder may have independently included this transaction) or that became invalid because of other transactions from the same sender that appeared during N. They also check that the resulting `BeaconState` has the same `beacon_state_root` committed to by the builder. The upshot of this step is that the IL in the beacon state contains transactions that are guaranteed to be valid and executable during the beginning of N+1. 
-- The proposer for N+1 produces a block with its own IL for N+2. The builder for N+1 reveals its payload, and validators deem it invalid if the first transactions do not agree with the corresponding IL exactly. 
+- Proposer for slot N submits a signed block and in parallel broadcasts pairs of `summaries` and `transactions` to be included at the beginning of slot N+1. `transactions` are just list of transactions that this proposer wants included at the most at the beginning of N+1. `Summaries` are lists consisting on addresses sending those transactions and their gas limits. The summaries are signed, the transactions aren't. An honest proposer is allowed to send many of these pairs that aren't committed to its beacon block so no double proposing slashing is involved.
+- Validators for slot N will consider the block for validation only if they have seen at least one pair (summary, transactions). They will consider the block invalid if those transactions are not executable at the start of slot N and if they don't have at least 12.5% higher `maxFeePerGas` than the current slot's `maxFeePerGas`. 
+- The builder for slot N reveals its payload together with a signed summary of the proposer of slot N-1. The payload is considered only valid if the following applies
+    - Let k >= 0 be the minimum such that tx[0],...,tx[k-1], the first `k` transactions of the payload of slot N, satisfy some entry in the summary and `tx[k]` does not satisfy any entry. 
+    - There exist transactions in the payload for N-1 that satisfy all the remaining entries in the summary. 
+    - The payload is executable, that is, it's valid from the execution layer perspective. 
 
-**Note:** in the event that the payload for the canonical block in slot N is not revealed, then the IL for slot N remains valid, the proposer for slot N+1 is not allowed to include a new IL.  
+**Note:** in the event that the payload for the canonical block in slot N is not revealed, then the summaries and transactions list for slot N-1 remains valid, the honest proposer for slot N+1 is not allowed to submit a new IL and any such message will be ignored. The builder for N+1 still has to satisfy the summary of N-1. If there are k slots in a row that are missing payloads, the next full slot will still need to satisfy the inclusion list for N-1. 
 
-There are some concerns about proposers using IL for data availability, since the CL will have to keep the blocks somewhere to reconstruct the beacon state. A proposer may freely include a IL in a block by including transactions and invalidating them all in the payload for the same slot N. There is a nice design by @vbuterin that instead of committing the IL to state, allows the txs to go on a sidecar together with a signed summary. The builder then needs to include the signed summary and a block that satisfies it. This design trades complexity for safety under the free DA issue of the above. 
 
 ## Builders
 
 There is a new entity `Builder` that is a glorified validator required to have a higher stake and required to sign when producing execution payloads. 
 
-- There is a new list in the `BeaconState` that contains all the registered builders
-- Builders are also validators (otherwise their staked capital depreciates)
-- We onboard builders by simply turning validators into builders if they achieve the necessary minimum balance (this way we avoid two forks to onboard builders and keep the same deposit flow, avoid builders to skip the entry churn)
-- The unit `ValidatorIndex` is used for both indexing validators and builders, after all, builders are validators. Throughout the code, we often see checks of the form `index < len(state.validators)`, thus we consider a `ValidatorIndex(len(state.validators))` to correspond to the first builder, that is `state.builders[0]`. 
+- Builders are also validators (otherwise their staked capital depreciates).
+- We onboard builders by simply turning validators into builders if they achieve the necessary minimum balance (this way we avoid two forks to onboard builders and keep the same deposit flow, avoid builders to skip the entry churn), we change their withdrawal prefix to be distinguished from normal validators.
+- We need to include several changes from the [MaxEB PR](https://github.com/michaelneuder/consensus-specs/pull/3) in order to account with builders having an increased balance that would otherwise depreciate. 
