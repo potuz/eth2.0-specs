@@ -169,5 +169,4 @@ def on_excecution_payload(store: Store, signed_envelope_: SignedExecutionPayload
 
     #Add new state for this payload to the store
     store.execution_payload_states[beacon_block_root] = state
-```
-     
+```   

@@ -574,19 +574,6 @@ The post-state corresponding to a pre-state `state` and a signed block `signed_b
 
 The post-state corresponding to a pre-state `state` and a signed execution payload `signed_execution_payload` is defined as `process_execution_payload(state, signed_execution_payload)`. State transitions that trigger an unhandled exception (e.g. a failed `assert` or an out-of-range list access) are considered invalid. State transitions that cause a `uint64` overflow or underflow are also considered invalid. 
 
-### Modified `verify_block_signature`
-
-```python
-def verify_block_signature(state: BeaconState, signed_block: SignedBeaconBlock) -> bool:
-    index = signed_block.message.proposer_index
-    if index < len(state.validators):
-        proposer = state.validators[index]
-    else:
-        proposer = state.builders[index-len(state.validators)]
-    signing_root = compute_signing_root(signed_block.message, get_domain(state, DOMAIN_BEACON_PROPOSER))
-    return bls.Verify(proposer.pubkey, signing_root, signed_block.signature)
-```
-
 ### Epoch processing
 
 #### Modified `process_epoch`
