@@ -24,6 +24,15 @@ At any given slot, the status of the blockchain's head may be either
 
 For a further introduction please refer to this [ethresear.ch article](https://ethresear.ch/t/payload-timeliness-committee-ptc-an-epbs-design/16054)
 
+## Constants 
+
+### Withdrawal prefixes
+
+| Name | Value |
+| - | - |
+| `BUILDER_WITHDRAWAL_PREFIX` | `Bytes1('0x0b')` # (New in ePBS) |
+
+
 ## Configuration
 
 ### Time parameters
@@ -44,19 +53,22 @@ For a further introduction please refer to this [ethresear.ch article](https://e
 
 | Name | Value |
 | - | - |
-| `DOMAIN_BEACON_BUILDER`     | `DomainType('0x0B000000')` |
-
-### State list lengths
-
-| Name | Value | Unit | Duration |
-| - | - | :-: | :-: |
-| `BUILDER_REGISTRY_LIMIT` | `uint64(2**20)` (=1,048,576) | builders | 
+| `DOMAIN_BEACON_BUILDER`     | `DomainType('0x0B000000')` # (New in ePBS)|
 
 ### Gwei values
 
 | Name | Value | 
 | - | - | 
-| `BUILDER_MIN_BALANCE` | `Gwei(2**10 * 10**9)` = (1,024,000,000,000) | 
+| `BUILDER_MIN_BALANCE` | `Gwei(2**10 * 10**9)` = (1,024,000,000,000) # (New in ePBS)| 
+| `MIN_ACTIVATION_BALANCE` | `Gwei(2**5 * 10**9)` (= 32,000,000,000) # (New in ePBS)|
+| `EFFECTIVE_BALANCE_INCREMENT` | `Gwei(2**0 * 10**9)` (= 1,000,000,000)  # (New in ePBS)|
+| `MAX_EFFECTIVE_BALANCE` | `Gwei(2**11 * 10**9)` = (2,048,000,000,000) # (Modified in ePBS) |
+
+### Rewards and penalties
+
+| Name | Value |
+| - | - |
+| `PROPOSER_EQUIVOCATION_PENALTY_FACTOR` | `uint64(2**2)` (= 4) # (New in ePBS)|
 
 ### Incentivization weights
 
@@ -68,23 +80,11 @@ For a further introduction please refer to this [ethresear.ch article](https://e
 | Name | Value | 
 | - | - | 
 | MAX_TRANSACTIONS_PER_INCLUSION_LIST | `2**4` (=16) | 
-| MAX_GAS_PER_INCLUSION_LIST | `2**20` (=1,048,576) |
+| MAX_GAS_PER_INCLUSION_LIST | `2**21` (=2,097,152) |
 
 ## Containers
 
 ### New containers
-
-#### `Builder`
-
-``` python
-class Builder(Container):
-    pubkey: BLSPubkey
-    withdrawal_address: ExecutionAddress  # Commitment to pubkey for withdrawals
-    effective_balance: Gwei  # Balance at stake
-    slashed: boolean
-    exit_epoch: Epoch
-    withdrawable_epoch: Epoch  # When builder can withdraw funds
-```
 
 #### `SignedExecutionPayloadHeader`
 
@@ -99,6 +99,8 @@ class SignedExecutionPayloadHeader(Container):
 ```python
 class ExecutionPayloadEnvelope(Container):
     payload: ExecutionPayload
+    builder_index: ValidatorIndex
+    value: Gwei 
     state_root: Root
 ```
 
@@ -110,9 +112,43 @@ class SignedExecutionPayloadEnvelope(Container):
     signature: BLSSignature
 ```
 
+#### `InclusionListSummaryEntry`
+
+```python
+class InclusionListSummaryEntry(Container):
+    address: ExecutionAddress
+    gas_limit: uint64
+```
+
+#### `InclusionListSummary`
+
+```python
+class InclusionListSummary(Container)
+    proposer_index: ValidatorIndex
+    summary: List[InclusionListSummaryEntry, MAX_TRANSACTIONS_PER_INCLUSION_LIST]
+```
+
+#### `SignedInclusionListSummary`
+
+```python
+class SignedInclusionListSummary(Container):
+    message: InclusionListSummary
+    signature: BLSSignature
+```
+
+#### `InclusionList`
+
+```python
+class InclusionList(Container)
+    summary: SignedInclusionListSummary
+    transactions: List[Transaction, MAX_TRANSACTIONS_PER_INCLUSION_LIST]
+```
+
 ### Modified containers
 
 #### `ExecutionPayload`
+
+**Note:** The `ExecutionPayload` is modified to contain the builder's index and the bid value. It also contains a transaction inclusion list summary signed by the corresponding beacon block proposer and the list of indices of transactions in the parent block that have to be excluded from the inclusion list summary because they were satisfied in the previous slot. 
 
 ```python
 class ExecutionPayload(Container):
@@ -133,11 +169,13 @@ class ExecutionPayload(Container):
     block_hash: Hash32  # Hash of execution block
     transactions: List[Transaction, MAX_TRANSACTIONS_PER_PAYLOAD]
     withdrawals: List[Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD]
-    builder_index: uint64 # [New in ePBS]
-    value: Gwei # [New in ePBS]
+    inclusion_list_summary: SignedInclusionListSummary # [New in ePBS]
+    inclusion_list_exclusions: List[uint64, MAX_TRANSACTIONS_PER_INCLUSION_LIST] # [New in ePBS]
 ```
 
 #### `ExecutionPayloadHeader`
+
+**Note:** The `ExecutionPayloadHeader` is modified to include the builder's index and the bid's value. 
 
 ```python
 class ExecutionPayloadHeader(Container):
@@ -162,28 +200,8 @@ class ExecutionPayloadHeader(Container):
     value: Gwei # [New in ePBS]
 ```
 
-#### `BeaconBlockBody`
-
-```python
-class BeaconBlockBody(Container):
-    randao_reveal: BLSSignature
-    eth1_data: Eth1Data  # Eth1 data vote
-    graffiti: Bytes32  # Arbitrary data
-    # Operations
-    proposer_slashings: List[ProposerSlashing, MAX_PROPOSER_SLASHINGS]
-    attester_slashings: List[AttesterSlashing, MAX_ATTESTER_SLASHINGS]
-    attestations: List[Attestation, MAX_ATTESTATIONS]
-    deposits: List[Deposit, MAX_DEPOSITS]
-    voluntary_exits: List[SignedVoluntaryExit, MAX_VOLUNTARY_EXITS]
-    sync_aggregate: SyncAggregate
-    execution_payload_header: SignedExecutionPayloadHeader  # [Modified in ePBS]
-    bls_to_execution_changes: List[SignedBLSToExecutionChange, MAX_BLS_TO_EXECUTION_CHANGES]
-    tx_inclusion_list: List[Transaction, MAX_TRANSACTIONS_PER_INCLUSION_LIST]
-```
-
-
 #### `BeaconState`
-*Note*: the beacon state is modified to store a signed latest execution payload header and it adds a registry of builders, their balances and two transaction inclusion lists.
+*Note*: the beacon state is modified to store a signed latest execution payload header.
 
 ```python
 class BeaconState(Container):
@@ -229,12 +247,6 @@ class BeaconState(Container):
     # Deep history valid from Capella onwards
     historical_summaries: List[HistoricalSummary, HISTORICAL_ROOTS_LIMIT]
     # PBS
-    builders: List[Builder, BUILDER_REGISTRY_LIMIT] # [New in ePBS]
-    builder_balances: List[Gwei, BUILDER_REGISTRY_LIMIT] # [New in ePBS]
-    previous_epoch_builder_participation: List[ParticipationFlags, BUILDER_REGISTRY_LIMIT] # [New in ePBS]
-    current_epoch_builder_participation: List[ParticipationFlags, BUILDER_REGISTRY_LIMIT] # [New in ePBS]
-    previous_tx_inclusion_list: List[Transaction, MAX_TRANSACTIONS_PER_INCLUSION_LIST] # [New in ePBS]
-    current_tx_inclusion_list: List[Transaction, MAX_TRANSACTIONS_PER_INCLUSION_LIST] # [New in ePBS]
     current_signed_execution_payload_header: SignedExecutionPayloadHeader # [New in ePBS]
 ```
 ## Helper functions
