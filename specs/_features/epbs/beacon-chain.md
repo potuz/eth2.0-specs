@@ -64,6 +64,12 @@ For a further introduction please refer to this [ethresear.ch article](https://e
 | `EFFECTIVE_BALANCE_INCREMENT` | `Gwei(2**0 * 10**9)` (= 1,000,000,000)  # (New in ePBS)|
 | `MAX_EFFECTIVE_BALANCE` | `Gwei(2**11 * 10**9)` = (2,048,000,000,000) # (Modified in ePBS) |
 
+### Time parameters
+
+| Name | Value | Unit | Duration |
+| - | - | :-: | :-: |
+| `MIN_SLOTS_FOR_INCLUSION_LISTS_REQUESTS` | `uint64(2)` | slots | 32 seconds # (New in ePBS) |
+
 ### Rewards and penalties
 
 | Name | Value |
@@ -99,8 +105,7 @@ class SignedExecutionPayloadHeader(Container):
 ```python
 class ExecutionPayloadEnvelope(Container):
     payload: ExecutionPayload
-    builder_index: ValidatorIndex
-    value: Gwei 
+    beacon_block_root: Root
     state_root: Root
 ```
 
@@ -146,6 +151,28 @@ class InclusionList(Container)
 
 ### Modified containers
 
+#### `BeaconBlockBody` 
+**Note:** The Beacon Block body is modified to contain a Signed `ExecutionPayloadHeader`. The containers `BeaconBlock` and `SignedBeaconBlock` are modified indirectly.
+
+```python
+class BeaconBlockBody(Container):
+    randao_reveal: BLSSignature
+    eth1_data: Eth1Data  # Eth1 data vote
+    graffiti: Bytes32  # Arbitrary data
+    # Operations
+    proposer_slashings: List[ProposerSlashing, MAX_PROPOSER_SLASHINGS]
+    attester_slashings: List[AttesterSlashing, MAX_ATTESTER_SLASHINGS]
+    attestations: List[Attestation, MAX_ATTESTATIONS]
+    deposits: List[Deposit, MAX_DEPOSITS]
+    voluntary_exits: List[SignedVoluntaryExit, MAX_VOLUNTARY_EXITS]
+    sync_aggregate: SyncAggregate
+    # Execution
+    # Removed execution_payload [ Removed in ePBS]
+    signed_execution_payload_header: SignedExecutionPayloadHeader  # [New in ePBS]
+    bls_to_execution_changes: List[SignedBLSToExecutionChange, MAX_BLS_TO_EXECUTION_CHANGES]
+    blob_kzg_commitments: List[KZGCommitment, MAX_BLOB_COMMITMENTS_PER_BLOCK]  # [New in Deneb:EIP4844]
+```
+
 #### `ExecutionPayload`
 
 **Note:** The `ExecutionPayload` is modified to contain the builder's index and the bid value. It also contains a transaction inclusion list summary signed by the corresponding beacon block proposer and the list of indices of transactions in the parent block that have to be excluded from the inclusion list summary because they were satisfied in the previous slot. 
@@ -169,6 +196,8 @@ class ExecutionPayload(Container):
     block_hash: Hash32  # Hash of execution block
     transactions: List[Transaction, MAX_TRANSACTIONS_PER_PAYLOAD]
     withdrawals: List[Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD]
+    builder_index: ValidatorIndex # [New in ePBS]
+    value: Gwei # [New in ePBS]
     inclusion_list_summary: SignedInclusionListSummary # [New in ePBS]
     inclusion_list_exclusions: List[uint64, MAX_TRANSACTIONS_PER_INCLUSION_LIST] # [New in ePBS]
 ```
@@ -196,8 +225,10 @@ class ExecutionPayloadHeader(Container):
     block_hash: Hash32  # Hash of execution block
     transactions_root: Root
     withdrawals_root: Root
-    builder_index: uint64 # [New in ePBS]
+    builder_index: ValidatorIndex # [New in ePBS]
     value: Gwei # [New in ePBS]
+    inclusion_list_summary_root: Root # [New in ePBS]
+    inclusion_list_exclusions_root: Root # [New in ePBS]
 ```
 
 #### `BeaconState`
@@ -572,62 +603,10 @@ def process_epoch(state: BeaconState) -> None:
     process_slashings_reset(state)
     process_randao_mixes_reset(state)
     process_historical_summaries_update(state)
-    process_participation_flag_updates(state) # [Modified in ePBS]
+    process_participation_flag_updates(state)
     process_sync_committee_updates(state)
     process_builder_updates(state) # [New in ePBS]
 ```
-
-#### Modified `process_participation_flag_updates`
-
-```python
-def process_participation_flag_updates(state: BeaconState) -> None:
-    state.previous_epoch_participation = state.current_epoch_participation
-    state.current_epoch_participation = [ParticipationFlags(0b0000_0000) for _ in range(len(state.validators))]
-    state.previous_epoch_builder_participation = state.current_epoch_builder_participation
-    state.current_epoch_builder_participation = [ParticipationFlags(0b0000_0000) for _ in range(len(state.builders))]
-```
-
-#### Rewards and penalties
-
-##### Helpers
-
-*Note*: the function `get_base_reward` is modified to account for builders.
-
-```python
-def get_base_reward(state: BeaconState, index: ValidatorIndex) -> Gwei:
-    """
-    Return the base reward for the validator defined by ``index`` with respect to the current ``state``.
-    """
-    if index < len(state.validators):
-        validator = state.validators[index]
-    else:
-        validator = state.builders[index-len(state.validators)]
-    increments = validator.effective_balance // EFFECTIVE_BALANCE_INCREMENT
-    return Gwei(increments * get_base_reward_per_increment(state))
-```
-
-*Note*: The function `is_active_validator_at_index` is new
-
-```python
-def is_active_validator_at_index(state: BeaconState, index: ValidatorIndex) -> Bool:
-    if index < len(state.validators):
-        validator = state.validators[index]
-    else:
-        validator = state
-
-```
-
-*Note*: The function `get_eligible_validator_indices` is modified to account for builders.
-
-```python
-def get_eligible_validator_indices(state: BeaconState) -> Sequence[ValidatorIndex]:
-    previous_epoch = get_previous_epoch(state)
-    return [
-        ValidatorIndex(index) for index, v in enumerate(state.validators + state.builders)
-        if is_active_validator(v, previous_epoch) or (v.slashed and previous_epoch + 1 < v.withdrawable_epoch)
-    ]
-```
-
 
 ### Execution engine
 
@@ -638,40 +617,10 @@ def get_eligible_validator_indices(state: BeaconState) -> Sequence[ValidatorInde
 ```python
 @dataclass
 class NewInclusionListRequest(object):
-    inclusion_list: List[Transaction, MAX_TRANSACTIONS_PER_INCLUSION_LIST]
+    inclusion_list: InclusionList
 ```
   
 #### Engine APIs
-
-#### Modified `notify_new_payload`
-*Note*: the function notify new payload is modified to raise an exception if the payload is not valid, and to return the list of transactions that remain valid in the inclusion list
-
-```python
-def notify_new_payload(self: ExecutionEngine, execution_payload: ExecutionPayload) -> List[Transaction, MAX_TRANSACTIONS_PER_INCLUSION_LIST]:
-    """
-    Raise an exception if ``execution_payload`` is not valid with respect to ``self.execution_state``. 
-    Returns the list of transactions in the inclusion list that remain valid after executing the payload. That is
-    it is guaranteed that the transactions returned in the list can be executed in the exact order starting from the 
-    current ``self.execution_state``.
-    """
-    ...
-```
-
-#### Modified `verify_and_notify_new_payload`
-*Note*: the function `verify_and_notify_new_payload` is modified so that it returns the list of transactions that remain valid in the forward inclusion list. It raises an exception if the payload is not valid. 
-
-```python
-def verify_and_notify_new_payload(self: ExecutionEngine,
-                                  new_payload_request: NewPayloadRequest) -> List[Transaction, MAX_TRANSACTIONS_PER_INCLUSION_LIST]:
-    """
-    Raise an exception if ``execution_payload`` is not valid with respect to ``self.execution_state``. 
-    Returns the list of transactions in the inclusion list that remain valid after executing the payload. That is
-    it is guaranteed that the transactions returned in the list can be executed in the exact order starting from the 
-    current ``self.execution_state``. 
-    """
-    assert self.is_valid_block_hash(new_payload_request.execution_payload)
-    return self.notify_new_payload(new_payload_request.execution_payload)
-```
 
 #### New `notify_new_inclusion_list`
 
@@ -680,8 +629,8 @@ def notify_new_inclusion_list(self: ExecutionEngine,
                               inclusion_list_request: NewInclusionListRequest) -> bool:
     """
     Return ``True`` if and only if the transactions in the inclusion list can be succesfully executed
-    starting from the current ``self.execution_state`` and that their total gas limit is less or equal than
-    ```MAX_GAS_PER_INCLUSION_LIST``.
+    starting from the current ``self.execution_state``, their total gas limit is less or equal that
+    ```MAX_GAS_PER_INCLUSION_LIST``, And the transactions in the list of transactions correspond to the signed summary
     """
     ...
 ```
@@ -690,13 +639,10 @@ def notify_new_inclusion_list(self: ExecutionEngine,
 
 *Note*: the function `process_block` is modified to only process the consensus block. The full state-transition process is broken into separate functions, one to process a `BeaconBlock` and another to process a `SignedExecutionPayload`.  
 
-Notice that `process_tx_inclusion_list` needs to be processed before the payload header since the former requires to check the last committed payload header. 
-
 
 ```python
 def process_block(state: BeaconState, block: BeaconBlock) -> None:
     process_block_header(state, block)
-    process_tx_inclusion_list(state, block, EXECUTION_ENGINE) # [New in ePBS]
     process_execution_payload_header(state, block.body.execution_payload_header) # [Modified in ePBS]
     # Removed process_withdrawal in ePBS is processed during payload processing [Modified in ePBS]
     process_randao(state, block.body)
@@ -705,34 +651,14 @@ def process_block(state: BeaconState, block: BeaconBlock) -> None:
     process_sync_aggregate(state, block.body.sync_aggregate)
 ```
 
-#### New `update_tx_inclusion_lists`
-
-```python
-def update_tx_inclusion_lists(state: BeaconState, payload: ExecutionPayload, engine: ExecutionEngine, inclusion_list: List[Transaction, MAX_TRANSACTION_PER_INCLUSION_LIST]) -> None:
-    old_transactions = payload.transactions[:len(state.previous_tx_inclusion_list)]
-    assert state.previous_tx_inclusion_list == old_transactions
-
-    state.previous_tx_inclusion_list = inclusion_list
-```
-
 #### New `verify_execution_payload_header_signature`
 
 ```python
 def verify_execution_payload_header_signature(state: BeaconState, signed_header: SignedExecutionPayloadHeader) -> bool:
-    builder = state.builders[signed_header.message.builder_index]
+    # Check the signature
+    builder = state.validators[signed_header.message.builder_index]
     signing_root = compute_signing_root(signed_header.message, get_domain(state, DOMAIN_BEACON_BUILDER))
-    if not bls.Verify(builder.pubkey, signing_root, signed_header.signature):
-        return False
-    return 
-```
-
-#### New `verify_execution_payload_signature`
-
-```python
-def verify_execution_envelope_signature(state: BeaconState, signed_envelope: SignedExecutionPayloadEnvelope) -> bool:
-    builder = state.builders[signed_envelope.message.payload.builder_index]
-    signing_root = compute_signing_root(signed_envelope.message, get_domain(state, DOMAIN_BEACON_BUILDER))
-    return bls.Verify(builder.pubkey, signing_root, signed_envelope.signature)
+    return bls.Verify(builder.pubkey, signing_root, signed_header.signature)
 ```
 
 #### New `process_execution_payload_header`
@@ -740,7 +666,11 @@ def verify_execution_envelope_signature(state: BeaconState, signed_envelope: Sig
 ```python
 def process_execution_payload_header(state: BeaconState, signed_header: SignedExecutionPayloadHeader) -> None:
     assert verify_execution_payload_header_signature(state, signed_header)
+    # Check that the builder has funds to cover the bid
     header = signed_header.message
+    builder_index = header.builder_index
+    if state.balances[builder_index] < header.value: 
+        return false
     # Verify consistency of the parent hash with respect to the previous execution payload header
     assert header.parent_hash == state.latest_execution_payload_header.block_hash
     # Verify prev_randao
@@ -749,6 +679,15 @@ def process_execution_payload_header(state: BeaconState, signed_header: SignedEx
     assert header.timestamp == compute_timestamp_at_slot(state, state.slot)
     # Cache execution payload header
     state.current_signed_execution_payload_header = signed_header
+```
+
+#### New `verify_execution_payload_signature`
+
+```python
+def verify_execution_envelope_signature(state: BeaconState, signed_envelope: SignedExecutionPayloadEnvelope) -> bool:
+    builder = state.validators[signed_envelope.message.payload.builder_index]
+    signing_root = compute_signing_root(signed_envelope.message, get_domain(state, DOMAIN_BEACON_BUILDER))
+    return bls.Verify(builder.pubkey, signing_root, signed_envelope.signature)
 ```
 
 #### Modified `process_execution_payload`
@@ -764,9 +703,14 @@ def process_execution_payload(state: BeaconState, signed_envelope: SignedExecuti
     previous_hash = hash_tree_root(state.current_signed_execution_payload_header.message)
     assert hash == previous_hash
     # Verify the execution payload is valid
-    inclusion_list = execution_engine.verify_and_notify_new_payload(NewPayloadRequest(execution_payload=payload))
-    # Verify and update the proposers inclusion lists
-    update_tx_inclusion_lists(state, payload, inclusion_list)
+    versioned_hashes = [kzg_commitment_to_versioned_hash(commitment) for commitment in body.blob_kzg_commitments]
+    assert execution_engine.verify_and_notify_new_payload(
+        NewPayloadRequest(
+            execution_payload=payload,
+            versioned_hashes=versioned_hashes,
+            parent_beacon_block_root=state.latest_block_header.parent_root,
+        )
+    )
     # Process Withdrawals in the payload
     process_withdrawals(state, payload)
     # Cache the execution payload header
@@ -774,18 +718,3 @@ def process_execution_payload(state: BeaconState, signed_envelope: SignedExecuti
     # Verify the state root
     assert signed_envelope.message.state_root == hash_tree_root(state)
 ```
-
-#### New `process_tx_inclusion_list`
-
-```python
-def process_tx_inclusion_list(state: BeaconState, block: BeaconBlock, execution_engine: ExecutionEngine) -> None:
-    inclusion_list = block.body.tx_inclusion_list
-    # Verify that the list is empty if the parent consensus block did not contain a payload
-    if state.current_signed_execution_payload_header.message != state.latest_execution_payload_header:
-        assert not inclusion_list
-        return
-    assert notify_new_inclusion_list(execution_engine, inclusion_list)
-    state.previous_tx_inclusion_list = state.current_tx_inclusion_list
-    state.current_tx_inclusion_list = inclusion_list
-```
-
