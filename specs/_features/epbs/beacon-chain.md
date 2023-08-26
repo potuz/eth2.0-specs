@@ -47,7 +47,7 @@ For a further introduction please refer to this [ethresear.ch article](https://e
 
 | Name | Value | 
 | - | - | 
-| `PTC_SIZE` | `uint64(2**9)` (=512) |
+| `PTC_SIZE` | `uint64(2**9)` (=512) # (New in ePBS) |
 
 ### Domain types
 
@@ -80,13 +80,13 @@ For a further introduction please refer to this [ethresear.ch article](https://e
 
 | Name | Value | 
 | - | - | 
-| `PTC_PENALTY_WEIGHT` | `uint64(2)` | 
+| `PTC_PENALTY_WEIGHT` | `uint64(2)` # (New in ePBS)| 
 
 ### Execution
 | Name | Value | 
 | - | - | 
-| MAX_TRANSACTIONS_PER_INCLUSION_LIST | `2**4` (=16) | 
-| MAX_GAS_PER_INCLUSION_LIST | `2**21` (=2,097,152) |
+| MAX_TRANSACTIONS_PER_INCLUSION_LIST | `2**4` (=16) # (New in ePBS) | 
+| MAX_GAS_PER_INCLUSION_LIST | `2**21` (=2,097,152) # (New in ePBS) |
 
 ## Containers
 
@@ -130,6 +130,7 @@ class InclusionListSummaryEntry(Container):
 ```python
 class InclusionListSummary(Container)
     proposer_index: ValidatorIndex
+    parent_block_hash: Hash32
     summary: List[InclusionListSummaryEntry, MAX_TRANSACTIONS_PER_INCLUSION_LIST]
 ```
 
@@ -281,6 +282,20 @@ class BeaconState(Container):
     current_signed_execution_payload_header: SignedExecutionPayloadHeader # [New in ePBS]
 ```
 
+## Helper functions
+
+### Predicates
+
+#### `is_builder`
+
+```python
+def is_builder(validator: Validator) -> bool:
+    """
+    Check if `validator` is a registered builder
+    """
+    return validator.withdrawal_credentials[0] == BUILDER_WITHDRAWAL_PREFIX
+```
+
 ## Beacon chain state transition function
 
 *Note*: state transition is fundamentally modified in ePBS. The full state transition is broken in two parts, first importing a signed block and then importing an execution payload. 
@@ -331,8 +346,9 @@ def notify_new_inclusion_list(self: ExecutionEngine,
                               inclusion_list_request: NewInclusionListRequest) -> bool:
     """
     Return ``True`` if and only if the transactions in the inclusion list can be succesfully executed
-    starting from the current ``self.execution_state``, their total gas limit is less or equal that
-    ```MAX_GAS_PER_INCLUSION_LIST``, And the transactions in the list of transactions correspond to the signed summary
+    starting from the execution state corresponding to the `parent_block_hash` in the inclusion list 
+    summary. The execution engine also checks that the total gas limit is less or equal that
+    ```MAX_GAS_PER_INCLUSION_LIST``, and the transactions in the list of transactions correspond to the signed summary
     """
     ...
 ```

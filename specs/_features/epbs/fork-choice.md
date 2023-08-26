@@ -27,6 +27,16 @@ def verify_inclusion_list(state: BeaconState, block: BeaconBlock, inclusion_list
     proposer_index = signed_summary.message.proposer_index
     assert block.proposer_index == proposer_index
 
+    # Check that the signature is correct
+    # TODO: do we need a new domain?
+    signing_root = compute_signing_root(signed_summary.message, get_domain(state, DOMAIN_BEACON_PROPOSER))
+    proposer = state.validators[proposer_index]
+    assert bls.Verify(proposer.pubkey, signing_root, signed_summary.signature)
+ 
+    # Check that the parent_hash corresponds to the state's last execution payload header
+    parent_hash = signed_summary.message.parent_block_hash
+    assert parent_hash == state.latest_execution_payload_header.block_hash
+
     # TODO: These checks will also be performed by the EL surely so we can probably remove them from here.
     # Check the summary and transaction list lengths
     summary = signed_summary.message.summary
@@ -37,13 +47,7 @@ def verify_inclusion_list(state: BeaconState, block: BeaconBlock, inclusion_list
     # Check that the total gas limit is bounded
     total_gas_limit = sum( entry.gas_limit for entry in summary)
     assert total_gas_limit <= MAX_GAS_PER_INCLUSION_LIST
-
-    # Check that the signature is correct
-    # TODO: do we need a new domain?
-    signing_root = compute_signing_root(signed_summary.message, get_domain(state, DOMAIN_BEACON_PROPOSER))
-    proposer = state.validators[proposer_index]
-    assert bls.Verify(proposer.pubkey, signing_root, signed_summary.signature)
-   
+  
     # Check that the inclusion list is valid
     return execution_engine.notify_new_inclusion_list(inclusion_list) 
 ```
