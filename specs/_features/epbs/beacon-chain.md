@@ -384,11 +384,13 @@ def verify_execution_payload_header_signature(state: BeaconState, signed_header:
 ```python
 def process_execution_payload_header(state: BeaconState, signed_header: SignedExecutionPayloadHeader) -> None:
     assert verify_execution_payload_header_signature(state, signed_header)
-    # Check that the builder has funds to cover the bid
+    # Check that the builder has funds to cover the bid and transfer the funds
     header = signed_header.message
     builder_index = header.builder_index
-    if state.balances[builder_index] < header.value: 
-        return false
+    amount = header.value
+    assert state.balances[builder_index] >= amount: 
+    decrease_balance(state, builder_index, amount)
+    increase_balance(state, proposer_index, amount)
     # Verify consistency of the parent hash with respect to the previous execution payload header
     assert header.parent_hash == state.latest_execution_payload_header.block_hash
     # Verify prev_randao
