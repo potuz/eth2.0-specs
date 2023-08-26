@@ -28,14 +28,6 @@ Payments are processed unconditionally when processing the signed execution payl
  
 ## Withdrawals
 
-Withdrawals cannot be fulfilled at the same time in the CL and the EL now: if they are included in the Execution payload for slot N, the consensus block for the same slot may have invalidated the validator balances. The new mechanism is as follows
-- Proposer for block N includes the withdrawals in his CL block and they are immediately processed in the CL
-- The execution payload for N mints ETH in the EL for the already burnt ETH in the CL during slot N-1. 
-- If the slot N-1 was empty, the proposer for N does not advance withdrawals and does not include any new withdrawals, so that each EL block mints a maximum of `MAX_WITHDRAWALS_PER_PAYLOAD` withdrawals. 
-- There is a new engine endpoint that notifies the EL of the next withdrawals that need to be included. The EL needs to verify the validity that the execution payload includes those withdrawals in the next blockhash.
+Withdrawals are deterministic on the beacon state, so on a consensus layer block processing, they are immediately processed, then later when the payload appears we verify that the withdrawals in the payload agree with the already fulfilled withdrawals in the CL.  
 
-### Examples
-
-(N-2, Full) -- (N-1: Full, withdrawals 0--15) -- (N: Empty, withdrawals 16--31) -- (N+1, does not send withdrawals, Full: excecutes withdrawals 0--15 since it is a child of the blockhash from N-1, thus grandchild of the blockhash of N-2) -- (N+2, withdrawals 32--47, Full: excecutes withdrawals 16--31) 
-
-(N-2, Full) - (N-1: Full withdrawals 0--15) -- (N: Empty, withdrawals 16--31) -- (N+1: Empty, no withdrawals) -- (N+2: no withdrawals, Full: executes withdrawals 0--15). 
+So when importing the CL block for slot N, we process the expected withdrawals at that slot. We save the list of paid withdrawals to the beacon state. When the payload for slot N appears, we check that the withdrawals correspond to the saved withdrawals. If the payload does not appear, the saved withdrawals remain, so any future payload has to include those.
