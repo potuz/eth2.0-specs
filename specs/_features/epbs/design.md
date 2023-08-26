@@ -26,3 +26,16 @@ There is a new entity `Builder` that is a glorified validator (they are simply v
 
 Payments are processed unconditionally when processing the signed execution payload header. There are cases to study for possible same-slot unbundling even by an equivocation. Same slot unbundling can happen if the proposer equivocates, and propagates his equivocation after seeing the reveal of the builder which happens at 8 seconds. The next proposer has to build on full which can only happen by being dishonest. Honest validators will vote for the previous block not letting the attack succeed. The honest builder does not lose his bid as the block is reorged. 
  
+## Withdrawals
+
+Withdrawals cannot be fulfilled at the same time in the CL and the EL now: if they are included in the Execution payload for slot N, the consensus block for the same slot may have invalidated the validator balances. The new mechanism is as follows
+- Proposer for block N includes the withdrawals in his CL block and they are immediately processed in the CL
+- The execution payload for N mints ETH in the EL for the already burnt ETH in the CL during slot N-1. 
+- If the slot N-1 was empty, the proposer for N does not advance withdrawals and does not include any new withdrawals, so that each EL block mints a maximum of `MAX_WITHDRAWALS_PER_PAYLOAD` withdrawals. 
+- There is a new engine endpoint that notifies the EL of the next withdrawals that need to be included. The EL needs to verify the validity that the execution payload includes those withdrawals in the next blockhash.
+
+### Examples
+
+(N-2, Full) -- (N-1: Full, withdrawals 0--15) -- (N: Empty, withdrawals 16--31) -- (N+1, does not send withdrawals, Full: excecutes withdrawals 0--15 since it is a child of the blockhash from N-1, thus grandchild of the blockhash of N-2) -- (N+2, withdrawals 32--47, Full: excecutes withdrawals 16--31) 
+
+(N-2, Full) - (N-1: Full withdrawals 0--15) -- (N: Empty, withdrawals 16--31) -- (N+1: Empty, no withdrawals) -- (N+2: no withdrawals, Full: executes withdrawals 0--15). 

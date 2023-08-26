@@ -171,6 +171,7 @@ class BeaconBlockBody(Container):
     signed_execution_payload_header: SignedExecutionPayloadHeader  # [New in ePBS]
     bls_to_execution_changes: List[SignedBLSToExecutionChange, MAX_BLS_TO_EXECUTION_CHANGES]
     blob_kzg_commitments: List[KZGCommitment, MAX_BLOB_COMMITMENTS_PER_BLOCK]
+    withdrawals: List[Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD]  # [New in ePBS]
 ```
 
 #### `ExecutionPayload`
@@ -328,6 +329,15 @@ def process_epoch(state: BeaconState) -> None:
 
 #### Request data
 
+##### New `NewWithdrawalsRequest`
+
+```python
+@dataclass
+class NewWithdrawalsRequest(object):
+    withdrawals: List[Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD]
+    parent_block_hash: Hash32
+```
+ 
 ##### New `NewInclusionListRequest`
 
 ```python
@@ -339,6 +349,19 @@ class NewInclusionListRequest(object):
   
 #### Engine APIs
 
+#### New `notify_withdrawals` 
+
+TODO: Can we send this with FCU as parameters instead of a new engine method reorg resistant? We need to remove withdrawals from the payload attributes now. 
+
+```python
+def notify_withdrawals(self: ExecutionEngine, withdrawals: NewWithdrawalsRequest) -> None
+    """
+    This call informs the EL that the next payload which is a grandchild of the current ``parent_block_hash``
+    needs to include the listed withdrawals that have been already fulfilled in the CL
+    """
+    ...
+```
+    
 #### New `notify_new_inclusion_list`
 
 ```python
@@ -355,18 +378,90 @@ def notify_new_inclusion_list(self: ExecutionEngine,
 
 ### Block processing
 
-*Note*: the function `process_block` is modified to only process the consensus block. The full state-transition process is broken into separate functions, one to process a `BeaconBlock` and another to process a `SignedExecutionPayload`.  
+*Note*: the function `process_block` is modified to only process the consensus block. The full state-transition process is broken into separate functions, one to process a `BeaconBlock` and another to process a `SignedExecutionPayload`. Notice that withdrawals are now included in the beacon block, they are processed before the execution payload header as this header may affect validator balances.
 
 
 ```python
 def process_block(state: BeaconState, block: BeaconBlock) -> None:
     process_block_header(state, block)
+    process_withdrawals(state, block.body) [Modified in ePBS]
     process_execution_payload_header(state, block.body.execution_payload_header) # [Modified in ePBS]
-    # Removed process_withdrawal in ePBS is processed during payload processing [Modified in ePBS]
     process_randao(state, block.body)
     process_eth1_data(state, block.body)
     process_operations(state, block.body)  # [Modified in ePBS]
     process_sync_aggregate(state, block.body.sync_aggregate)
+```
+
+#### Modified `get_expected_withdrawals`
+**Note:** the function `get_expected_withdrawals` is modified to return no withdrawals if the parent block was empty.
+TODO: Still need to include the MaxEB changes
+
+```python
+def get_expected_withdrawals(state: BeaconState) -> Sequence[Withdrawal]:
+    ## return early if the parent block was empty
+    withdrawals: List[Withdrawal] = []
+    if state.current_signed_execution_payload_header.message != state.latest_execution_payload_header:
+        return withdrawals
+    epoch = get_current_epoch(state)
+    withdrawal_index = state.next_withdrawal_index
+    validator_index = state.next_withdrawal_validator_index
+    bound = min(len(state.validators), MAX_VALIDATORS_PER_WITHDRAWALS_SWEEP)
+    for _ in range(bound):
+        validator = state.validators[validator_index]
+        balance = state.balances[validator_index]
+        if is_fully_withdrawable_validator(validator, balance, epoch):
+            withdrawals.append(Withdrawal(
+                index=withdrawal_index,
+                validator_index=validator_index,
+                address=ExecutionAddress(validator.withdrawal_credentials[12:]),
+                amount=balance,
+            ))
+            withdrawal_index += WithdrawalIndex(1)
+        elif is_partially_withdrawable_validator(validator, balance):
+            withdrawals.append(Withdrawal(
+                index=withdrawal_index,
+                validator_index=validator_index,
+                address=ExecutionAddress(validator.withdrawal_credentials[12:]),
+                amount=balance - MAX_EFFECTIVE_BALANCE,
+            ))
+            withdrawal_index += WithdrawalIndex(1)
+        if len(withdrawals) == MAX_WITHDRAWALS_PER_PAYLOAD:
+            break
+        validator_index = ValidatorIndex((validator_index + 1) % len(state.validators))
+    return withdrawals
+```
+
+#### Modified `process_withdrawals`
+**Note:** TODO: This is modified to take a `BeaconBlockBody`. Still need to include the MaxEB changes
+
+```python
+def process_withdrawals(state: BeaconState, body: BeaconBlockBody) -> None:
+    withdrawals = body.withdrawals
+    expected_withdrawals = get_expected_withdrawals(state)
+    assert len(withdrawals) == len(expected_withdrawals)
+
+    for expected_withdrawal, withdrawal in zip(expected_withdrawals, withdrawals):
+        assert withdrawal == expected_withdrawal
+        decrease_balance(state, withdrawal.validator_index, withdrawal.amount)
+
+    # Update the next withdrawal index if this block contained withdrawals
+    if len(expected_withdrawals) != 0:
+        latest_withdrawal = expected_withdrawals[-1]
+        state.next_withdrawal_index = WithdrawalIndex(latest_withdrawal.index + 1)
+
+    # Update the next validator index to start the next withdrawal sweep
+    if len(expected_withdrawals) == MAX_WITHDRAWALS_PER_PAYLOAD:
+        # Next sweep starts after the latest withdrawal's validator index
+        next_validator_index = ValidatorIndex((expected_withdrawals[-1].validator_index + 1) % len(state.validators))
+        state.next_withdrawal_validator_index = next_validator_index
+    else:
+        # Advance sweep by the max length of the sweep if there was not a full set of withdrawals
+        next_index = state.next_withdrawal_validator_index + MAX_VALIDATORS_PER_WITHDRAWALS_SWEEP
+        next_validator_index = ValidatorIndex(next_index % len(state.validators))
+        state.next_withdrawal_validator_index = next_validator_index
+    # Inform the EL of the processed withdrawals
+    hash = body.signed_execution_payload_header.message.parent_block_hash
+    execution_engine.notify_withdrawals(NewWithdrawalsRequest(withdrawals=withdrawals, parent_block_hash = hash))
 ```
 
 #### New `verify_execution_payload_header_signature`
@@ -431,8 +526,6 @@ def process_execution_payload(state: BeaconState, signed_envelope: SignedExecuti
             parent_beacon_block_root=state.latest_block_header.parent_root,
         )
     )
-    # Process Withdrawals in the payload
-    process_withdrawals(state, payload)
     # Cache the execution payload header
     state.latest_execution_payload_header = state.current_signed_execution_payload_header.message 
     # Verify the state root
