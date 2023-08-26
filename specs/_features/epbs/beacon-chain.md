@@ -130,7 +130,6 @@ class InclusionListSummaryEntry(Container):
 ```python
 class InclusionListSummary(Container)
     proposer_index: ValidatorIndex
-    parent_block_hash: Hash32
     summary: List[InclusionListSummaryEntry, MAX_TRANSACTIONS_PER_INCLUSION_LIST]
 ```
 
@@ -335,6 +334,7 @@ def process_epoch(state: BeaconState) -> None:
 @dataclass
 class NewInclusionListRequest(object):
     inclusion_list: InclusionList
+    parent_block_hash: Hash32
 ```
   
 #### Engine APIs
