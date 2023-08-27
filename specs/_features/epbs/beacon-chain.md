@@ -329,15 +329,6 @@ def process_epoch(state: BeaconState) -> None:
 
 #### Request data
 
-##### New `NewWithdrawalsRequest`
-
-```python
-@dataclass
-class NewWithdrawalsRequest(object):
-    withdrawals: List[Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD]
-    parent_block_hash: Hash32
-```
- 
 ##### New `NewInclusionListRequest`
 
 ```python
