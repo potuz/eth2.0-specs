@@ -363,7 +363,7 @@ def notify_new_inclusion_list(self: ExecutionEngine,
 def process_block(state: BeaconState, block: BeaconBlock) -> None:
     process_block_header(state, block)
     process_withdrawals(state) [Modified in ePBS]
-    process_execution_payload_header(state, block.body.execution_payload_header) # [Modified in ePBS]
+    process_execution_payload_header(state, block) # [Modified in ePBS]
     process_randao(state, block.body)
     process_eth1_data(state, block.body)
     process_operations(state, block.body)  # [Modified in ePBS]
@@ -413,7 +413,8 @@ def verify_execution_payload_header_signature(state: BeaconState, signed_header:
 #### New `process_execution_payload_header`
 
 ```python
-def process_execution_payload_header(state: BeaconState, signed_header: SignedExecutionPayloadHeader) -> None:
+def process_execution_payload_header(state: BeaconState, block: BeaconBlock) -> None:
+    signed_header = block.body.signed_execution_payload_header
     assert verify_execution_payload_header_signature(state, signed_header)
     # Check that the builder has funds to cover the bid and transfer the funds
     header = signed_header.message
@@ -421,7 +422,7 @@ def process_execution_payload_header(state: BeaconState, signed_header: SignedEx
     amount = header.value
     assert state.balances[builder_index] >= amount: 
     decrease_balance(state, builder_index, amount)
-    increase_balance(state, proposer_index, amount)
+    increase_balance(state, block.proposer_index, amount)
     # Verify consistency of the parent hash with respect to the previous execution payload header
     assert header.parent_hash == state.latest_execution_payload_header.block_hash
     # Verify prev_randao
