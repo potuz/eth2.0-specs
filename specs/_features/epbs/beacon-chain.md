@@ -222,6 +222,7 @@ class BeaconBlockBody(Container):
 
 **Note:** The `ExecutionPayload` is modified to contain the builder's index and the bid value. It also contains a transaction inclusion list summary signed by the corresponding beacon block proposer and the list of indices of transactions in the parent block that have to be excluded from the inclusion list summary because they were satisfied in the previous slot. 
 
+TODO: `builder_index` and `value` do not need to be in the payload sent to the engine, but they need to be in the header committed to the state. Either we move them out here to the envelope and we add them to back when comparing with the committed header, or we keep as here and we will be sending 16 extra bytes to the EL that are ignored. 
 ```python
 class ExecutionPayload(Container):
     # Execution block header fields
@@ -324,7 +325,7 @@ class BeaconState(Container):
     historical_summaries: List[HistoricalSummary, HISTORICAL_ROOTS_LIMIT]
     # PBS
     current_signed_execution_payload_header: SignedExecutionPayloadHeader # [New in ePBS]
-    last_withdrawals: List[Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD] # [New in ePBS]
+    last_withdrawals_root: Root # [New in ePBS]
 ```
 
 ## Helper functions
@@ -424,7 +425,7 @@ def process_withdrawals(state: BeaconState) -> None:
     if state.current_signed_execution_payload_header.message != state.latest_execution_payload_header:
         return 
     withdrawals = get_expected_withdrawals(state)
-    state.last_withdrawals = withdrawals
+    state.last_withdrawals_root = hash_tree_root(withdrawals)
     for withdrawal in withdrawals:
         decrease_balance(state, withdrawal.validator_index, withdrawal.amount)
 
@@ -468,6 +469,8 @@ def process_execution_payload_header(state: BeaconState, block: BeaconBlock) -> 
     assert state.balances[builder_index] >= amount: 
     decrease_balance(state, builder_index, amount)
     increase_balance(state, block.proposer_index, amount)
+    # Verify the withdrawals_root against the state cached ones
+    assert header.withdrawals_root == state.last_withdrawals_root
     # Verify consistency of the parent hash with respect to the previous execution payload header
     assert header.parent_hash == state.latest_execution_payload_header.block_hash
     # Verify prev_randao
@@ -499,10 +502,6 @@ def process_execution_payload(state: BeaconState, signed_envelope: SignedExecuti
     hash = hash_tree_root(payload)
     previous_hash = hash_tree_root(state.current_signed_execution_payload_header.message)
     assert hash == previous_hash
-    # Verify the withdrawals
-    assert len(state.last_withrawals) == len(payload.withdrawals)
-    for withdrawal, payload_withdrawal in zip(state.last_withdrawals, payload.withdrawals):
-        assert withdrawal == payload_withdrawal 
     # Verify the execution payload is valid
     versioned_hashes = [kzg_commitment_to_versioned_hash(commitment) for commitment in body.blob_kzg_commitments]
     assert execution_engine.verify_and_notify_new_payload(
