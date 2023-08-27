@@ -5,6 +5,15 @@
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
+- [Introduction](#introduction)
+- [Helpers](#helpers)
+  - [`verify_inclusion_list`](#verify_inclusion_list)
+  - [`is_inclusion_list_available`](#is_inclusion_list_available)
+- [Updated fork-choice handlers](#updated-fork-choice-handlers)
+  - [`on_block`](#on_block)
+- [New fork-choice handlers](#new-fork-choice-handlers)
+  - [`on_execution_payload`](#on_execution_payload)
+
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 <!-- /TOC -->
 
