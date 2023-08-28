@@ -23,6 +23,28 @@ This is the modification of the fork choice accompanying the ePBS upgrade.
 
 ## Helpers
 
+### Modified `Store` 
+**Note:** `Store` is modified to track the intermediate states of "empty" consensus blocks, that is, those consensus blocks for which the corresponding execution payload has not been revealed or has not been included on chain. 
+
+```python
+@dataclass
+class Store(object):
+    time: uint64
+    genesis_time: uint64
+    justified_checkpoint: Checkpoint
+    finalized_checkpoint: Checkpoint
+    unrealized_justified_checkpoint: Checkpoint
+    unrealized_finalized_checkpoint: Checkpoint
+    proposer_boost_root: Root
+    equivocating_indices: Set[ValidatorIndex]
+    blocks: Dict[Root, BeaconBlock] = field(default_factory=dict)
+    block_states: Dict[Root, BeaconState] = field(default_factory=dict)
+    checkpoint_states: Dict[Checkpoint, BeaconState] = field(default_factory=dict)
+    latest_messages: Dict[ValidatorIndex, LatestMessage] = field(default_factory=dict)
+    unrealized_justifications: Dict[Root, Checkpoint] = field(default_factory=dict)
+    execution_payload_states: Dict[Root, BeaconState] = field(default_factory=dict) # [New in ePBS]
+```
+
 ### `verify_inclusion_list`
 *[New in ePBS]*
 
@@ -76,7 +98,7 @@ def is_inclusion_list_available(state: BeaconState, block: BeaconBlock) -> bool:
     `MIN_SLOTS_FOR_INCLUSION_LISTS_REQUESTS`
     """
     # Verify that the list is empty if the parent consensus block did not contain a payload
-    if state.current_signed_execution_payload_header.message != state.latest_execution_payload_header:
+    if state.signed_execution_payload_header_envelope.message.header != state.latest_execution_payload_header:
         return true
 
     # verify the inclusion list
@@ -98,6 +120,8 @@ def validate_ptc_from_block(store: Store, payload_attestation: PayloadAttestatio
 
 *Note*: The handler `on_block` is modified to consider the pre `state` of the given consensus beacon block depending not only on the parent block root, but also on the parent blockhash. There is also the addition of the inclusion list availability check.
 
+In addition we delay the checking of blob availability until the processing of the execution payload. 
+
 ```python
 def on_block(store: Store, signed_block: SignedBeaconBlock) -> None:
     """
@@ -109,10 +133,10 @@ def on_block(store: Store, signed_block: SignedBeaconBlock) -> None:
 
     # Check if this blocks builds on empty or full parent block
     parent_block = store.blocks[block.parent_root]
-    parent_signed_payload_header = parent_block.body.signed_execution_payload_header
-    parent_payload_hash = paernt_signed_payload_header.message.block_hash
-    current_signed_payload_header = block.body.signed_execution_payload_header
-    current_payload_parent_hash = current_signed_payload_header.message.parent_hash
+    parent_signed_payload_header_envelope = parent_block.body.signed_execution_payload_header_envelope
+    parent_payload_hash = parent_signed_payload_header_envelope.message.header.block_hash
+    current_signed_payload_header_envelope = block.body.signed_execution_payload_header_envelope
+    current_payload_parent_hash = current_signed_payload_header_envelope.message.header.parent_hash
     # Make a copy of the state to avoid mutability issues
     if current_payload_parent_hash == parent_payload_hash:
         assert block.parent_root in store.execution_payload_states
@@ -134,10 +158,6 @@ def on_block(store: Store, signed_block: SignedBeaconBlock) -> None:
         store.finalized_checkpoint.epoch,
     )
     assert store.finalized_checkpoint.root == finalized_checkpoint_block
-
-    # Check if blob data is available
-    # If not, this block MAY be queued and subsequently considered when blob data becomes available
-    assert is_data_available(hash_tree_root(block), block.body.blob_kzg_commitments)
 
     # Check if there is a valid inclusion list. 
     # This check is performed only if the block's slot is within the visibility window
@@ -172,16 +192,20 @@ def on_block(store: Store, signed_block: SignedBeaconBlock) -> None:
 ### `on_execution_payload`
 
 ```python
-def on_excecution_payload(store: Store, signed_envelope_: SignedExecutionPayloadEnvelope) -> None:
+def on_excecution_payload(store: Store, signed_envelope: SignedExecutionPayloadEnvelope) -> None:
     """
     Run ``on_execution_payload`` upon receiving a new execution payload.
     """
-    beacon_block_root = signed_envelope.beacon_block_root
+    envelope = signed_envelope.message 
     # The corresponding beacon block root needs to be known
-    assert beacon_block_root in store.block_states
+    assert envelope.beacon_block_root in store.block_states
+
+    # Check if blob data is available
+    # If not, this payload MAY be queued and subsequently considered when blob data becomes available
+    assert is_data_available(envelope.beacon_block_root, envelope.blob_kzg_commitments)
 
     # Make a copy of the state to avoid mutability issues
-    state = copy(store.block_states[beacon_block_root])
+    state = copy(store.block_states[envelope.beacon_block_root])
 
     # Process the execution payload
     process_execution_payload(state, signed_envelope, EXECUTION_ENGINE)

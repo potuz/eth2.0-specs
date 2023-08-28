@@ -180,13 +180,31 @@ class SignedExecutionPayloadHeader(Container):
     message: ExecutionPayloadHeader
     signature: BLSSignature
 ```
+#### `ExecutionPayloadHeaderEnvelope`
 
+```python
+class ExecutionPayloadHeaderEnvelope(Container):
+    header: ExecutionPayloadHeader
+    builder_index: ValidatorIndex
+    value: Gwei
+```
+
+#### `SignedExecutionPayloadHeaderEnvelope`
+
+```python
+class SignedExecutionPayloadHeaderEnvelope(Container):
+    message: ExecutionPayloadHeaderEnvelope
+    signature: BLSSignature
+```
+    
 #### `ExecutionPayloadEnvelope`
 
 ```python
 class ExecutionPayloadEnvelope(Container):
     payload: ExecutionPayload
+    builder_index: ValidatorIndex
     beacon_block_root: Root
+    blob_kzg_commitments: List[KZGCommitment, MAX_BLOB_COMMITMENTS_PER_BLOCK]
     state_root: Root
 ```
 
@@ -248,17 +266,16 @@ class BeaconBlockBody(Container):
     voluntary_exits: List[SignedVoluntaryExit, MAX_VOLUNTARY_EXITS]
     sync_aggregate: SyncAggregate
     # Execution
-    # Removed execution_payload [ Removed in ePBS]
-    signed_execution_payload_header: SignedExecutionPayloadHeader  # [New in ePBS]
+    # Removed execution_payload [Removed in ePBS]
+    # Removed blob_kzg_commitments [Removed in ePBS]
+    signed_execution_payload_header_envelope: SignedExecutionPayloadHeaderEnvelope  # [New in ePBS]
     bls_to_execution_changes: List[SignedBLSToExecutionChange, MAX_BLS_TO_EXECUTION_CHANGES]
-    blob_kzg_commitments: List[KZGCommitment, MAX_BLOB_COMMITMENTS_PER_BLOCK]
 ```
 
 #### `ExecutionPayload`
 
-**Note:** The `ExecutionPayload` is modified to contain the builder's index and the bid value. It also contains a transaction inclusion list summary signed by the corresponding beacon block proposer and the list of indices of transactions in the parent block that have to be excluded from the inclusion list summary because they were satisfied in the previous slot. 
+**Note:** The `ExecutionPayload` is modified to contain a transaction inclusion list summary signed by the corresponding beacon block proposer and the list of indices of transactions in the parent block that have to be excluded from the inclusion list summary because they were satisfied in the previous slot. 
 
-TODO: `builder_index` and `value` do not need to be in the payload sent to the engine, but they need to be in the header committed to the state. Either we move them out here to the envelope and we add them to back when comparing with the committed header, or we keep as here and we will be sending 16 extra bytes to the EL that are ignored. 
 ```python
 class ExecutionPayload(Container):
     # Execution block header fields
@@ -278,15 +295,15 @@ class ExecutionPayload(Container):
     block_hash: Hash32  # Hash of execution block
     transactions: List[Transaction, MAX_TRANSACTIONS_PER_PAYLOAD]
     withdrawals: List[Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD]
-    builder_index: ValidatorIndex # [New in ePBS]
-    value: Gwei # [New in ePBS]
+    blob_gas_used: uint64
+    excess_blob_gas: uint64
     inclusion_list_summary: SignedInclusionListSummary # [New in ePBS]
     inclusion_list_exclusions: List[uint64, MAX_TRANSACTIONS_PER_INCLUSION_LIST] # [New in ePBS]
 ```
 
 #### `ExecutionPayloadHeader`
 
-**Note:** The `ExecutionPayloadHeader` is modified to include the builder's index and the bid's value. 
+**Note:** The `ExecutionPayloadHeader` is modified to account for the transactions inclusion lists. 
 
 ```python
 class ExecutionPayloadHeader(Container):
@@ -307,8 +324,8 @@ class ExecutionPayloadHeader(Container):
     block_hash: Hash32  # Hash of execution block
     transactions_root: Root
     withdrawals_root: Root
-    builder_index: ValidatorIndex # [New in ePBS]
-    value: Gwei # [New in ePBS]
+    blob_gas_used: uint64
+    excess_blob_gas: uint64
     inclusion_list_summary_root: Root # [New in ePBS]
     inclusion_list_exclusions_root: Root # [New in ePBS]
 ```
@@ -360,7 +377,7 @@ class BeaconState(Container):
     # Deep history valid from Capella onwards
     historical_summaries: List[HistoricalSummary, HISTORICAL_ROOTS_LIMIT]
     # PBS
-    current_signed_execution_payload_header: SignedExecutionPayloadHeader # [New in ePBS]
+    signed_execution_payload_header_envelope: SignedExecutionPayloadHeaderEnvelop # [New in ePBS]
     last_withdrawals_root: Root # [New in ePBS]
 ```
 
@@ -508,12 +525,13 @@ def notify_new_inclusion_list(self: ExecutionEngine,
 def process_block(state: BeaconState, block: BeaconBlock) -> None:
     process_block_header(state, block)
     process_withdrawals(state) [Modified in ePBS]
-    process_execution_payload_header(state, block) # [Modified in ePBS]
+    process_execution_payload_header(state, block) # [Modified in ePBS, removed process_execution_payload]
     process_randao(state, block.body)
     process_eth1_data(state, block.body)
     process_operations(state, block.body)  # [Modified in ePBS]
     process_sync_aggregate(state, block.body.sync_aggregate)
 ```
+
 #### Modified `process_operations`
 
 **Note:** `process_operations` is modified to process PTC attestations
@@ -626,7 +644,7 @@ def process_payload_attestation(state: BeaconState, payload_attestation: Payload
 ```python
 def process_withdrawals(state: BeaconState) -> None:
     ## return early if the parent block was empty
-     state.current_signed_execution_payload_header.message != state.latest_execution_payload_header:
+     state.signed_execution_payload_header_envelope.message.header != state.latest_execution_payload_header:
         return 
     withdrawals = get_expected_withdrawals(state)
     state.last_withdrawals_root = hash_tree_root(withdrawals)
@@ -650,26 +668,27 @@ def process_withdrawals(state: BeaconState) -> None:
         state.next_withdrawal_validator_index = next_validator_index
 ```
 
-#### New `verify_execution_payload_header_signature`
+#### New `verify_execution_payload_header_envelope_signature`
 
 ```python
-def verify_execution_payload_header_signature(state: BeaconState, signed_header: SignedExecutionPayloadHeader) -> bool:
+def verify_execution_payload_header_envelope_signature(state: BeaconState, 
+                                           signed_header_envelope: SignedExecutionPayloadHeaderEnvelope) -> bool:
     # Check the signature
-    builder = state.validators[signed_header.message.builder_index]
-    signing_root = compute_signing_root(signed_header.message, get_domain(state, DOMAIN_BEACON_BUILDER))
-    return bls.Verify(builder.pubkey, signing_root, signed_header.signature)
+    builder = state.validators[signed_header_envelope.message.builder_index]
+    signing_root = compute_signing_root(signed_header_envelope.message, get_domain(state, DOMAIN_BEACON_BUILDER))
+    return bls.Verify(builder.pubkey, signing_root, signed_header_envelope.signature)
 ```
 
 #### New `process_execution_payload_header`
 
 ```python
 def process_execution_payload_header(state: BeaconState, block: BeaconBlock) -> None:
-    signed_header = block.body.signed_execution_payload_header
-    assert verify_execution_payload_header_signature(state, signed_header)
+    signed_header_envelope = block.body.signed_execution_payload_header_envelope
+    assert verify_execution_payload_header_envelope_signature(state, signed_header_envelope)
     # Check that the builder has funds to cover the bid and transfer the funds
-    header = signed_header.message
-    builder_index = header.builder_index
-    amount = header.value
+    envelope = signed_header_envelope.message
+    builder_index = envelope.builder_index
+    amount = envelope.value
     assert state.balances[builder_index] >= amount: 
     decrease_balance(state, builder_index, amount)
     increase_balance(state, block.proposer_index, amount)
@@ -681,15 +700,15 @@ def process_execution_payload_header(state: BeaconState, block: BeaconBlock) -> 
     assert header.prev_randao == get_randao_mix(state, get_current_epoch(state))
     # Verify timestamp
     assert header.timestamp == compute_timestamp_at_slot(state, state.slot)
-    # Cache execution payload header
-    state.current_signed_execution_payload_header = signed_header
+    # Cache execution payload header envelope
+    state.signed_execution_payload_header_envelope = signed_header_envelope
 ```
 
 #### New `verify_execution_payload_signature`
 
 ```python
 def verify_execution_envelope_signature(state: BeaconState, signed_envelope: SignedExecutionPayloadEnvelope) -> bool:
-    builder = state.validators[signed_envelope.message.payload.builder_index]
+    builder = state.validators[signed_envelope.message.builder_index]
     signing_root = compute_signing_root(signed_envelope.message, get_domain(state, DOMAIN_BEACON_BUILDER))
     return bls.Verify(builder.pubkey, signing_root, signed_envelope.signature)
 ```
@@ -701,13 +720,19 @@ def verify_execution_envelope_signature(state: BeaconState, signed_envelope: Sig
 def process_execution_payload(state: BeaconState, signed_envelope: SignedExecutionPayloadEnvelope, execution_engine: ExecutionEngine) -> None:
     # Verify signature [New in ePBS]
     assert verify_execution_envelope_signature(state, signed_envelope)
-    payload = signed_envelope.message.payload
+    envelope = signed_envelope.message
+    payload = envelope.payload
+    # Verify consistency with the beacon block
+    assert envelope.beacon_block_root == hash_tree_root(state.latest_block_header)
     # Verify consistency with the committed header
     hash = hash_tree_root(payload)
-    previous_hash = hash_tree_root(state.current_signed_execution_payload_header.message)
+    commited_envelope = state.signed_execution_payload_header_envelope.message
+    previous_hash = hash_tree_root(committed_envelope.payload)
     assert hash == previous_hash
+    # Verify consistency with the envelope
+    assert envelope.builder_index == committed_envelope.builder_index
     # Verify the execution payload is valid
-    versioned_hashes = [kzg_commitment_to_versioned_hash(commitment) for commitment in body.blob_kzg_commitments]
+    versioned_hashes = [kzg_commitment_to_versioned_hash(commitment) for commitment in envelope.blob_kzg_commitments]
     assert execution_engine.verify_and_notify_new_payload(
         NewPayloadRequest(
             execution_payload=payload,
@@ -716,7 +741,7 @@ def process_execution_payload(state: BeaconState, signed_envelope: SignedExecuti
         )
     )
     # Cache the execution payload header
-    state.latest_execution_payload_header = state.current_signed_execution_payload_header.message 
+    state.latest_execution_payload_header = committed_envelope.payload
     # Verify the state root
-    assert signed_envelope.message.state_root == hash_tree_root(state)
+    assert envelope.state_root == hash_tree_root(state)
 ```
