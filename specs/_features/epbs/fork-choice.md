@@ -50,7 +50,7 @@ def verify_inclusion_list(state: BeaconState, block: BeaconBlock, inclusion_list
 
     # TODO: These checks will also be performed by the EL surely so we can probably remove them from here.
     # Check that the total gas limit is bounded
-    total_gas_limit = sum( entry.gas_limit for entry in summary)
+    total_gas_limit = sum( entry.gas_limit for entry in summary )
     assert total_gas_limit <= MAX_GAS_PER_INCLUSION_LIST
   
     # Check that the inclusion list is valid
@@ -82,6 +82,13 @@ def is_inclusion_list_available(state: BeaconState, block: BeaconBlock) -> bool:
     return verify_inclusion_list(state, block, inclusion_list, EXECUTION_ENGINE)
 ```
     
+### `validate_on_payload_attestation`
+
+```python
+def validate_ptc_from_block(store: Store, payload_attestation: PayloadAttestation) -> None:
+    # The beacon block root must be known
+    assert payload_attestation.data.beacon_block_root in store.blocks
+```
 
 ## Updated fork-choice handlers
 
@@ -180,3 +187,13 @@ def on_excecution_payload(store: Store, signed_envelope_: SignedExecutionPayload
     #Add new state for this payload to the store
     store.execution_payload_states[beacon_block_root] = state
 ```   
+
+### `on_payload_attestation`
+
+```python
+def on_payload_attestation(store: Store, ptc_attestation: PayloadAttestation) -> None
+    """
+    Run ``on_payload_attestation`` upon receiving a new ``payload_attestation`` from either within a ``BeaconBlock``
+    or directly on the wire.
+    """
+    # 

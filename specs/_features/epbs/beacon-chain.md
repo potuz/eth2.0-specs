@@ -98,7 +98,8 @@ For a further introduction please refer to this [ethresear.ch article](https://e
 
 | Name | Value |
 | - | - |
-| `DOMAIN_BEACON_BUILDER`     | `DomainType('0x0B000000')` # (New in ePBS)|
+| `DOMAIN_BEACON_BUILDER`     | `DomainType('0x1B000000')` # (New in ePBS)|
+| `DOMAIN_PTC_ATTESTER`       | `DomainType('0x0C000000')` # (New in ePBS)|
 
 ### Gwei values
 
@@ -136,6 +137,41 @@ For a further introduction please refer to this [ethresear.ch article](https://e
 ## Containers
 
 ### New containers
+
+#### `PayloadAttestationData`
+
+```python
+class PayloadAttestationData(Container):
+    beacon_block_root: Root
+    payload_present: bool
+```
+
+#### `PayloadAttestation`
+
+```python
+class PayloadAttestation(Container):
+    aggregation_bits: BitVector[PTC_SIZE]
+    data: PayloadAttestationData
+    signature: BLSSignature
+```
+
+#### `PayloadAttestationMessage`
+
+```python
+class PayloadAttestationMessage(Container):
+    validator_index: ValidatorIndex
+    data: PayloadAttestationData
+    signature: BLSSignature
+```
+
+#### `IndexedPayloadAttestation`
+
+```python
+class IndexedPayloadAttestation(Container):
+    attesting_indices: List[ValidatorIndex, PTC_SIZE]
+    data: PayloadAttestationData
+    signature: BLSSignature
+```
 
 #### `SignedExecutionPayloadHeader`
 
@@ -342,6 +378,68 @@ def is_builder(validator: Validator) -> bool:
     return validator.withdrawal_credentials[0] == BUILDER_WITHDRAWAL_PREFIX
 ```
 
+#### `is_valid_indexed_payload_attestation`
+
+```python
+def is_valid_indexed_payload_attestation(state: BeaconState, indexed_payload_attestation: IndexedPayloadAttestation) -> bool:
+    """
+    Check if ``indexed_payload_attestation`` is not empty, has sorted and unique indices and has a valid aggregate signature.
+    """
+    # Verify indices are sorted and unique
+    indices = indexed_payload_attestation.attesting_indices
+    if len(indices) == 0 or not indices == sorted(set(indices)):
+        return False
+    # Verify aggregate signature
+    pubkeys = [state.validators[i].pubkey for i in indices]
+    domain = get_domain(state, DOMAIN_PTC_ATTESTER, None)
+    signing_root = compute_signing_root(indexed_payload_attestation.data, domain)
+    return bls.FastAggregateVerify(pubkeys, signing_root, indexed_payload_attestation.signature)
+```
+
+### Beacon State accessors
+
+#### `get_ptc`
+
+```python
+def get_ptc(state: BeaconState, slot: Slot) -> Vector[ValidatorIndex, PTC_SIZE]:
+    """
+    Get the ptc committee for the give ``slot``
+    """
+    beacon_committee = get_beacon_committee(state, slot, 0)[:PTC_SIZE]
+    validator_indices = [idx for idx in beacon_committee if not is_builder(idx)]
+    return validator_indices[:PTC_SIZE]
+```
+
+#### `get_payload_attesting_indices`
+
+```python
+def get_payload_attesting_indices(state: BeaconState, 
+    slot: Slot, payload_attestation: PayloadAttestation) -> Set[ValidatorIndex]:
+    """
+    Return the set of attesting indices corresponding to ``payload_attestation``.
+    """
+    ptc = get_ptc(state, slot)
+    return set(index for i, index in enumerate(ptc) if payload_attestation.aggregation_bits[i])
+```
+
+
+#### `get_indexed_payload_attestation`
+
+```python
+def get_indexed_payload_attestation(state: BeaconState, 
+    slot: Slot, payload_attestation: PayloadAttestation) -> IndexedPayloadAttestation:
+    """
+    Return the indexed payload attestation corresponding to ``payload_attestation``.
+    """
+    attesting_indices = get_payload_attesting_indices(state, slot, payload_attestation)
+
+    return IndexedPayloadAttestation(
+        attesting_indices=sorted(attesting_indices),
+        data=payload_attestation.data,
+        signature=payload_attestation.signature,
+    )
+```
+
 ## Beacon chain state transition function
 
 *Note*: state transition is fundamentally modified in ePBS. The full state transition is broken in two parts, first importing a signed block and then importing an execution payload. 
@@ -415,6 +513,111 @@ def process_block(state: BeaconState, block: BeaconBlock) -> None:
     process_operations(state, block.body)  # [Modified in ePBS]
     process_sync_aggregate(state, block.body.sync_aggregate)
 ```
+#### Modified `process_operations`
+
+**Note:** `process_operations` is modified to process PTC attestations
+
+```python
+def process_operations(state: BeaconState, body: BeaconBlockBody) -> None:
+    # Verify that outstanding deposits are processed up to the maximum number of deposits
+    assert len(body.deposits) == min(MAX_DEPOSITS, state.eth1_data.deposit_count - state.eth1_deposit_index)
+
+    def for_ops(operations: Sequence[Any], fn: Callable[[BeaconState, Any], None]) -> None:
+        for operation in operations:
+            fn(state, operation)
+
+    for_ops(body.proposer_slashings, process_proposer_slashing)
+    for_ops(body.attester_slashings, process_attester_slashing)
+    for_ops(body.attestations, process_attestation)
+    for_ops(body.deposits, process_deposit)
+    for_ops(body.voluntary_exits, process_voluntary_exit)
+    for_ops(body.bls_to_execution_changes, process_bls_to_execution_change)
+    for_ops(body.payload_attestations, process_payload_attestation) # [New in ePBS]
+```
+
+#### Modified `process_attestation`
+
+*Note*: The function `process_attestation` is modified to ignore attestations from the ptc
+
+```python
+def process_attestation(state: BeaconState, attestation: Attestation) -> None:
+    data = attestation.data
+    assert data.target.epoch in (get_previous_epoch(state), get_current_epoch(state))
+    assert data.target.epoch == compute_epoch_at_slot(data.slot)
+    assert data.slot + MIN_ATTESTATION_INCLUSION_DELAY <= state.slot <= data.slot + SLOTS_PER_EPOCH
+    assert data.index < get_committee_count_per_slot(state, data.target.epoch)
+
+    committee = get_beacon_committee(state, data.slot, data.index)
+    assert len(attestation.aggregation_bits) == len(committee)
+
+    # Participation flag indices
+    participation_flag_indices = get_attestation_participation_flag_indices(state, data, state.slot - data.slot)
+
+    # Verify signature
+    assert is_valid_indexed_attestation(state, get_indexed_attestation(state, attestation))
+
+    # Update epoch participation flags
+    if data.target.epoch == get_current_epoch(state):
+        epoch_participation = state.current_epoch_participation
+    else:
+        epoch_participation = state.previous_epoch_participation
+
+    ptc = get_ptc(state, data.slot)
+    attesting_indices = [i for i in get_attesting_indices(state, data, attestation.aggregation_bits) if i not in ptc]
+    proposer_reward_numerator = 0
+    for index in attesting_indices
+        for flag_index, weight in enumerate(PARTICIPATION_FLAG_WEIGHTS):
+            if flag_index in participation_flag_indices and not has_flag(epoch_participation[index], flag_index):
+                epoch_participation[index] = add_flag(epoch_participation[index], flag_index)
+                proposer_reward_numerator += get_base_reward(state, index) * weight
+
+    # Reward proposer
+    proposer_reward_denominator = (WEIGHT_DENOMINATOR - PROPOSER_WEIGHT) * WEIGHT_DENOMINATOR // PROPOSER_WEIGHT
+    proposer_reward = Gwei(proposer_reward_numerator // proposer_reward_denominator)
+    increase_balance(state, get_beacon_proposer_index(state), proposer_reward)
+```
+
+
+##### Payload Attestations
+
+```python
+def process_payload_attestation(state: BeaconState, payload_attestation: PayloadAttestation) -> None:
+    ## Check that the attestation is for the parent beacon block
+    data = payload_attestation.data
+    assert data.beacon_block_root == state.latest_block_header.parent_root
+    ## Check that the attestation is for the previous slot
+    assert state.slot > 0
+    assert data.beacon_block_root == state.block_roots[(state.slot - 1) % SLOTS_PER_HISTORICAL_ROOT]
+
+    #Verify signature
+    indexed_payload_attestation = get_indexed_payload_attestation(state, state.slot - 1, payload_attestation)
+    assert is_valid_indexed_payload_attestation(state, indexed_payload_attestation)
+
+    ptc = get_ptc(state, state.slot - 1)
+    if slot % SLOTS_PER_EPOCH == 0:
+        epoch_participation = state.previous_epoch_participation
+    else:
+        epoch_participation = state.current_epoch_participation
+
+    # Return early if the attestation is for the wrong payload status
+    latest_payload_timestamp = state.latest_execution_payload_header.timestamp
+    present_timestamp = compute_timestamp_at_slot(state, state.slot - 1)
+    payload_was_present = latest_payload_timestamp == present_timestamp
+    if data.payload_present != payload_was_present:
+        return
+    # Reward the proposer and set all the participation flags
+    proposer_reward_numerator = 0
+    for index in indexed_payload_attestation.attesting_indices:
+        for flag_index, weight in enumerate(PARTICIPATION_FLAG_WEIGHTS):
+            if not has_flag(epoch_participation[index], flag_index):
+                epoch_participation[index] = add_flag(epoch_participation[index], flag_index)
+                proposer_reward_numerator += get_base_reward(state, index) * weight
+
+    # Reward proposer
+    proposer_reward_denominator = (WEIGHT_DENOMINATOR - PROPOSER_WEIGHT) * WEIGHT_DENOMINATOR // PROPOSER_WEIGHT
+    proposer_reward = Gwei(proposer_reward_numerator // proposer_reward_denominator)
+    increase_balance(state, get_beacon_proposer_index(state), proposer_reward)
+```
 
 #### Modified `process_withdrawals`
 **Note:** TODO: This is modified to take only the State as parameter as they are deterministic. Still need to include the MaxEB changes
@@ -422,7 +625,7 @@ def process_block(state: BeaconState, block: BeaconBlock) -> None:
 ```python
 def process_withdrawals(state: BeaconState) -> None:
     ## return early if the parent block was empty
-    if state.current_signed_execution_payload_header.message != state.latest_execution_payload_header:
+     state.current_signed_execution_payload_header.message != state.latest_execution_payload_header:
         return 
     withdrawals = get_expected_withdrawals(state)
     state.last_withdrawals_root = hash_tree_root(withdrawals)
