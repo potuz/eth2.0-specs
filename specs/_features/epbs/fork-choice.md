@@ -55,7 +55,9 @@ def verify_inclusion_list(state: BeaconState, block: BeaconBlock, inclusion_list
   
     # Check that the inclusion list is valid
     return execution_engine.notify_new_inclusion_list(NewInclusionListRequest(
-            inclusion_list=inclusion_list, parent_block_hash = state.latest_execution_payload_header.block_hash))
+            inclusion_list=inclusion_list.transactions, 
+            summary=inclusion_list.summary.message.summary,
+            parent_block_hash = state.latest_execution_payload_header.block_hash))
 ```
 
 ### `is_inclusion_list_available`

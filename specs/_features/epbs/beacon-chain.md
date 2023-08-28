@@ -478,7 +478,8 @@ def process_epoch(state: BeaconState) -> None:
 ```python
 @dataclass
 class NewInclusionListRequest(object):
-    inclusion_list: InclusionList
+    inclusion_list: List[Transaction, MAX_TRANSACTIONS_PER_INCLUSION_LIST]
+    summary: List[InclusionListSummaryEntry, MAX_TRANSACTIONS_PER_INCLUSION_LIST]
     parent_block_hash: Hash32
 ```
   
