@@ -106,12 +106,18 @@ def is_inclusion_list_available(state: BeaconState, block: BeaconBlock) -> bool:
     return verify_inclusion_list(state, block, inclusion_list, EXECUTION_ENGINE)
 ```
     
-### `validate_on_payload_attestation`
+### `notify_ptc_messages`
 
 ```python
-def validate_ptc_from_block(store: Store, payload_attestation: PayloadAttestation) -> None:
-    # The beacon block root must be known
-    assert payload_attestation.data.beacon_block_root in store.blocks
+def notify_ptc_messages(store: Store, state: BeaconState, payload_attestations: Sequence[PayloadAttestation]) -> None:
+    """
+    Extracts a list of ``PayloadAttestationMessage`` from ``payload_attestations`` and updates the store with them
+    """
+    for payload_attestation in payload_attestations:
+        indexed_payload_attestation = get_indexed_payload_attestation(state, state.slot - 1, payload_attestation)
+        for idx in indexed_payload_attestation.attesting_indices:
+            store.on_payload_attestation_message(PayloadAttestationMessage(validator_index=idx,
+                    data=payload_attestation.data, signature: BLSSignature(), is_from_block=true)
 ```
 
 ## Updated fork-choice handlers
@@ -174,6 +180,9 @@ def on_block(store: Store, signed_block: SignedBeaconBlock) -> None:
     # Add new state for this block to the store
     store.block_states[block_root] = state
 
+    # Notify the store about the payload_attestations in the block
+    store.notify_ptc_messages(state, block.body.payload_attestations)
+
     # Add proposer score boost if the block is timely
     time_into_slot = (store.time - store.genesis_time) % SECONDS_PER_SLOT
     is_before_attesting_interval = time_into_slot < SECONDS_PER_SLOT // INTERVALS_PER_SLOT
@@ -214,12 +223,34 @@ def on_excecution_payload(store: Store, signed_envelope: SignedExecutionPayloadE
     store.execution_payload_states[beacon_block_root] = state
 ```   
 
-### `on_payload_attestation`
+### `on_payload_attestation_message`
 
 ```python
-def on_payload_attestation(store: Store, ptc_attestation: PayloadAttestation) -> None
+def on_payload_attestation_message(store: Store, 
+    ptc_message: PayloadAttestationMessage, is_from_block: bool=False) -> None:
     """
-    Run ``on_payload_attestation`` upon receiving a new ``payload_attestation`` from either within a ``BeaconBlock``
-    or directly on the wire.
+    Run ``on_payload_attestation_message`` upon receiving a new ``ptc_message`` directly on the wire.
     """
-    # 
+    # The beacon block root must be known
+    data = ptc_message.data
+    # PTC attestation must be for a known block. If block is unknown, delay consideration until the block is found
+    state = store.block_states[data.beacon_block_root]
+    ptc = get_ptc(state, state.slot)
+
+    # Verify the signature and check that its for the current slot if it is coming from the wire
+    if not is_from_block:
+        # Check that the attestation is for the current slot
+        assert state.slot == get_current_slot(store)
+        # Check that the attester is from the current ptc
+        assert ptc_message.validator_index in ptc
+        # Verify the signature
+        assert is_valid_indexed_payload_attestation(state, 
+            IndexedPayloadAttestation(attesting_indices = [ptc_message.validator_index], data = data,
+                                      signature = ptc_message signature))
+    # Update the ptc vote for the block
+    # TODO: Do we want to slash ptc members that equivocate? 
+    # we are updating here the message and so the last vote will be the one that counts.
+    ptc_index = ptc.index(ptc_message.validator_index)
+    ptc_vote = store.ptc_vote[data.beacon_block_root]
+    ptc_vote[ptc_index] = data.present
+```

@@ -122,6 +122,12 @@ For a further introduction please refer to this [ethresear.ch article](https://e
 | - | - |
 | `PROPOSER_EQUIVOCATION_PENALTY_FACTOR` | `uint64(2**2)` (= 4) # (New in ePBS)|
 
+### Max operations per block
+
+| Name | Value |
+| - | - |
+| `MAX_PAYLOAD_ATTESTATIONS` | `2**1` (= 2) # (New in ePBS) |
+
 ### Incentivization weights
 
 | Name | Value | 
@@ -268,8 +274,10 @@ class BeaconBlockBody(Container):
     # Execution
     # Removed execution_payload [Removed in ePBS]
     # Removed blob_kzg_commitments [Removed in ePBS]
-    signed_execution_payload_header_envelope: SignedExecutionPayloadHeaderEnvelope  # [New in ePBS]
     bls_to_execution_changes: List[SignedBLSToExecutionChange, MAX_BLS_TO_EXECUTION_CHANGES]
+    # PBS
+    signed_execution_payload_header_envelope: SignedExecutionPayloadHeaderEnvelope  # [New in ePBS]
+    payload_attestations: List[PayloadAttestation, MAX_PAYLOAD_ATTESTATIONS] # [New in ePBS]
 ```
 
 #### `ExecutionPayload`
