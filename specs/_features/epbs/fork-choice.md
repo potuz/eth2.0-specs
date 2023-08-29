@@ -21,6 +21,12 @@
 
 This is the modification of the fork choice accompanying the ePBS upgrade.
 
+## Constant
+
+| Name                 | Value       |
+| -------------------- | ----------- |
+| `PAYLOAD_TIMELY_THRESHOLD` | `PTC_SIZE/2` (=`uint64(256)`) | 
+
 ## Helpers
 
 ### Modified `Store` 
@@ -43,6 +49,7 @@ class Store(object):
     latest_messages: Dict[ValidatorIndex, LatestMessage] = field(default_factory=dict)
     unrealized_justifications: Dict[Root, Checkpoint] = field(default_factory=dict)
     execution_payload_states: Dict[Root, BeaconState] = field(default_factory=dict) # [New in ePBS]
+    ptc_vote: Dict[Root, Vector[bool, PTC_SIZE]] = field(default_factory=dict) # [New in ePBS]
 ```
 
 ### `verify_inclusion_list`
@@ -120,6 +127,19 @@ def notify_ptc_messages(store: Store, state: BeaconState, payload_attestations: 
                     data=payload_attestation.data, signature: BLSSignature(), is_from_block=true)
 ```
 
+### `is_payload_present`
+
+```python
+def is_payload_present(store: Store, beacon_block_root: Root) -> bool:
+    """
+    return wether the execution payload for the beacon block with root ``beacon_block_root`` was voted as present 
+    by the PTC
+    """
+    # The beacon block root must be known
+    assert beacon_block_root in store.ptc_vote
+    return ptc_vote[beacon_block_root].count(True) > PAYLOAD_TIMELY_THRESHOLD
+```
+   
 ## Updated fork-choice handlers
 
 ### `on_block`
@@ -179,6 +199,8 @@ def on_block(store: Store, signed_block: SignedBeaconBlock) -> None:
     store.blocks[block_root] = block
     # Add new state for this block to the store
     store.block_states[block_root] = state
+    # Add a new PTC voting for this block to the store
+    store.ptc_vote[block_root] = [False]*PTC_SIZE
 
     # Notify the store about the payload_attestations in the block
     store.notify_ptc_messages(state, block.body.payload_attestations)
