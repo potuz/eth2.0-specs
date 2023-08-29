@@ -391,6 +391,20 @@ class BeaconState(Container):
 
 ## Helper functions
 
+### Math
+
+#### `bit_floor`
+
+```python
+def bit_floor(n: uint64) -> uint64:
+    """
+    if ``n`` is not zero, returns the largest power of `2` that is not greater than `n`.
+    """
+    if n == 0:
+        return 0
+    return uint64(1) << (n.bit_length() - 1)
+```
+    
 ### Predicates
 
 #### `is_builder`
@@ -430,9 +444,16 @@ def get_ptc(state: BeaconState, slot: Slot) -> Vector[ValidatorIndex, PTC_SIZE]:
     """
     Get the ptc committee for the give ``slot``
     """
-    beacon_committee = get_beacon_committee(state, slot, 0)[:PTC_SIZE]
-    validator_indices = [idx for idx in beacon_committee if not is_builder(idx)]
-    return validator_indices[:PTC_SIZE]
+    epoch = compute_epoch_at_slot(slot)
+    committees_per_slot = bit_floor(max(get_committee_count_per_slot(state, epoch), PTC_SIZE))
+    members_per_committee = PTC_SIZE/committees_per_slot
+    
+    validator_indices = [] 
+    for idx in range(committees_per_slot)
+        beacon_committee = get_beacon_committee(state, slot, idx)
+        vals = [idx for idx in beacon_committee if not is_builder(idx)]
+        validator_indices += vals[:members_per_commitee]
+    return validator_indices
 ```
 
 #### `get_payload_attesting_indices`
