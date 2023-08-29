@@ -6,13 +6,18 @@
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
 - [Introduction](#introduction)
+- [Constant](#constant)
 - [Helpers](#helpers)
+  - [Modified `Store`](#modified-store)
   - [`verify_inclusion_list`](#verify_inclusion_list)
   - [`is_inclusion_list_available`](#is_inclusion_list_available)
+  - [`notify_ptc_messages`](#notify_ptc_messages)
+  - [`is_payload_present`](#is_payload_present)
 - [Updated fork-choice handlers](#updated-fork-choice-handlers)
   - [`on_block`](#on_block)
 - [New fork-choice handlers](#new-fork-choice-handlers)
   - [`on_execution_payload`](#on_execution_payload)
+  - [`on_payload_attestation_message`](#on_payload_attestation_message)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 <!-- /TOC -->
