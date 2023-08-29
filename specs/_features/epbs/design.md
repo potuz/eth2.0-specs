@@ -36,3 +36,14 @@ So when importing the CL block for slot N, we process the expected withdrawals a
 
 - KZG Commitments are now sent on the Execution Payload envelope broadcasted by the EL and the EL block can only be valid if the data is available. 
 - Blobs themselves may be broadcasted by the builder below as soon as it sees the beacon block if he sees it's safe. 
+
+## PTC Rewards
+- PTC members are obtained as the first members from each beacon slot committee that are not builders.
+- attesters are rewarded as a full attestation when they get the right payload presence: that is, if they vote for full (resp. empty) and the payload is included (resp. not included) then they get their participation bits (target, source and head timely) set. Otherwise they get a penalty as a missed attestation. 
+- Attestations to the CL block from these members are just ignored. 
+
+## PTC Attestations
+
+There are two ways to import PTC attestations. CL blocks contain aggregates, called `PayloadAttestation` in the spec. And committee members broadcast unaggregated `PayloadAttestationMessage`s. The latter are only imported over the wire for the current slot, and the former are only imported on blocks for the previous slot. 
+
+
