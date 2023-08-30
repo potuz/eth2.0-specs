@@ -10,6 +10,7 @@
   - [Blobs](#blobs)
   - [PTC Rewards](#ptc-rewards)
   - [PTC Attestations](#ptc-attestations)
+  - [Forkchoice changes](#forkchoice-changes)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -61,8 +62,6 @@ So when importing the CL block for slot N, we process the expected withdrawals a
 
 There are two ways to import PTC attestations. CL blocks contain aggregates, called `PayloadAttestation` in the spec. And committee members broadcast unaggregated `PayloadAttestationMessage`s. The latter are only imported over the wire for the current slot, and the former are only imported on blocks for the previous slot. 
 
-TODO: These import are current broken in the specs in that they only allow a PTC member of the current slot to vote for a beacon block of the current slot, that is, if their head was a previous beacon block, their vote will be disregarded completely and they will be penalized.
-
 ## Forkchoice changes
 
 There are significant design decisions to make due to the fact that a slot can have 3 different statuses:
@@ -85,7 +84,8 @@ In this fork the proposer of `N+1` is attempting to reorg the payload of `N` tha
 - The only changes to the view of `N` as empty/full could come only when importing `N+1`, a beacon block that contains PTC Messages attesting for the payload of `N`. However, if honest validators have already achieved the threshold for `full`, they will consider the block full. 
 - This is one design decision: instead of having a hard threshold on the PTC (50% in the current spec) we could have a relative one, say for example a simple majority of the counted votes. This has some minor engineering problems (like keeping track of who voted in forkchoice more than simply if they voted for present or not), but this can easily be changed if there are some liveness concerns. 
 - The honest builder for `N+1` would not submit a bid here, since honest builders would have seen `N` as full also, they would only build on top of the blockhash included in `N`. 
-- The honest PTC members for `N+1` will vote for 
+- The honest PTC members for `N+1` will vote for `N, Full` they will be rewarded but they will not change the forkchoice view that `N` was already full. 
+- PTC members voting for a previous blockroot cannot change the forkchoice view of the payload status either way. 
 
 So the questions is what changes do we need to make to our current weight accounting so that we have `(N, Full)` and `(N+1, Full)` as viable for head above, but not `(N, Empty)`?. Moreover, we want `(N, Full)` to be the winner in the above situation. Before dwelling in the justification, let me say right away that a proposer for `N+2` would call `get_head` and would get `N.root`. And then he will call `is_payload_present(N.root)` and he will get `True` so he will propose based on `(N, Full)` reorging back the dishonest (malinformed) proposer of `N+1`. The implementation of `is_payload_present` is trivial so the only question is how to do LMD counting so that `N` beats `N+1` in the head computation. 
 

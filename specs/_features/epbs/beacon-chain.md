@@ -166,6 +166,7 @@ For a further introduction please refer to this [ethresear.ch article](https://e
 ```python
 class PayloadAttestationData(Container):
     beacon_block_root: Root
+    slot: Slot
     payload_present: bool
 ```
 
@@ -650,23 +651,22 @@ def process_payload_attestation(state: BeaconState, payload_attestation: Payload
     ## Check that the attestation is for the parent beacon block
     data = payload_attestation.data
     assert data.beacon_block_root == state.latest_block_header.parent_root
-    ## Check that the attestation is for the previous slot (TODO: Fix this to be the head block root or simply hurt the ptc members)
-    assert state.slot > 0
-    assert data.beacon_block_root == state.block_roots[(state.slot - 1) % SLOTS_PER_HISTORICAL_ROOT]
+    ## Check that the attestation is for the previous slot
+    assert data.slot + 1 == state.slot 
 
     #Verify signature
-    indexed_payload_attestation = get_indexed_payload_attestation(state, state.slot - 1, payload_attestation)
+    indexed_payload_attestation = get_indexed_payload_attestation(state, data.slot, payload_attestation)
     assert is_valid_indexed_payload_attestation(state, indexed_payload_attestation)
 
-    ptc = get_ptc(state, state.slot - 1)
-    if slot % SLOTS_PER_EPOCH == 0:
+    ptc = get_ptc(state, data.slot)
+    if state.slot % SLOTS_PER_EPOCH == 0:
         epoch_participation = state.previous_epoch_participation
     else:
         epoch_participation = state.current_epoch_participation
 
     # Return early if the attestation is for the wrong payload status
     latest_payload_timestamp = state.latest_execution_payload_header.timestamp
-    present_timestamp = compute_timestamp_at_slot(state, state.slot - 1)
+    present_timestamp = compute_timestamp_at_slot(state, data.slot)
     payload_was_present = latest_payload_timestamp == present_timestamp
     if data.payload_present != payload_was_present:
         return
