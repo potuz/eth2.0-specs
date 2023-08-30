@@ -94,6 +94,7 @@ There are several notions that can be changed when we have *empty* or *full* slo
     - we can consider checkpoints to be of the form `(Epoch, Root, bool)` where the `bool` is to indicate if the Beacon block was full or not.
     - Another option is to consider checkpoints to be of the form `(Epoch, Root)` exactly as we do today, but only consider the last *full* block before or equal to the `Epoch` start.
 Both have advantages and disadvantages, the second one allows for different contending states to be the first state of an epoch, but it keeps all implementations exactly as they are today.
+    - A third approach, which seems the best so far, is to keep `(Epoch, Root)` and let head of the chain determine if it is *Full* or *Empty* as described below.
 - Ancestry computations, as in `get_ancestor`.
     - We can change the signature of this function to be of the form `get_ancestor(Store, Root, slot) -> (Root, bool)` So that it returns the beacon block root and weather or not it is based on *Full* or *Empty*. 
     - Otherwise we can simply return the last *Full* block in the line of ancestry. Again there are advantages and disadvantages. In this last case, it would be very hard to know if two given blocks with a given payload status are in the same chain or not. 
