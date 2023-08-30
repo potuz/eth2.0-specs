@@ -252,6 +252,7 @@ def on_excecution_payload(store: Store, signed_envelope: SignedExecutionPayloadE
 
 ### `on_payload_attestation_message`
 
+TODO: Fix this to allow votes for the head block? (or simply hurt the ptc members)
 ```python
 def on_payload_attestation_message(store: Store, 
     ptc_message: PayloadAttestationMessage, is_from_block: bool=False) -> None:

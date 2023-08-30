@@ -650,7 +650,7 @@ def process_payload_attestation(state: BeaconState, payload_attestation: Payload
     ## Check that the attestation is for the parent beacon block
     data = payload_attestation.data
     assert data.beacon_block_root == state.latest_block_header.parent_root
-    ## Check that the attestation is for the previous slot
+    ## Check that the attestation is for the previous slot (TODO: Fix this to be the head block root or simply hurt the ptc members)
     assert state.slot > 0
     assert data.beacon_block_root == state.block_roots[(state.slot - 1) % SLOTS_PER_HISTORICAL_ROOT]
 
