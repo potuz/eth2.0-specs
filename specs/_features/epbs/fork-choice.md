@@ -243,7 +243,7 @@ def get_head(store: Store) -> tuple[Root, bool]:
     while True:
         children = [
             (root, present) for root in blocks.keys()
-            if blocks[root].parent_root == head for present in (True, False)
+            if blocks[root].parent_root == head_root for present in (True, False)
         ]
         if len(children) == 0:
             return (head_root, head_full)
