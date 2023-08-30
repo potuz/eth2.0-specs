@@ -144,7 +144,111 @@ def is_payload_present(store: Store, beacon_block_root: Root) -> bool:
     assert beacon_block_root in store.ptc_vote
     return ptc_vote[beacon_block_root].count(True) > PAYLOAD_TIMELY_THRESHOLD
 ```
-   
+
+### Modified `get_ancestor` 
+**Note:** `get_ancestor` is modified to return whether the chain is based on an *empty* or *full* block. 
+
+```python
+def get_ancestor(store: Store, root: Root, slot: Slot) -> tuple[Root, bool]:
+    """
+    returns the beacon block root of the ancestor of the beacon block with ``root`` at``slot`` and it also 
+    returns ``true`` if it based on a full block and ``false`` otherwise. 
+    If the beacon block with ``root`` is already at ``slot`` it returns it's PTC status.
+    """
+    block = store.blocks[root]
+    if block.slot == slot:
+        return [root, store.is_payload_present(root)]
+    parent = store.blocks[block.parent_root]
+    if parent.slot > slot:
+        return get_ancestor(store, block.parent_root, slot)
+    if block.body.signed_execution_payload_header_envelope.message.parent_hash == 
+        parent.body.signed_execution_payload_header_envelope.message.block_hash:
+        return (block.parent_root, True)
+    return (block.parent_root, False)
+```
+
+### Modified `get_checkpoint_block`
+**Note:** `get_checkpoint_block` is modified to use the new `get_ancestor`
+
+```python
+def get_checkpoint_block(store: Store, root: Root, epoch: Epoch) -> Root:
+    """
+    Compute the checkpoint block for epoch ``epoch`` in the chain of block ``root``
+    """
+    epoch_first_slot = compute_start_slot_at_epoch(epoch)
+    (ancestor_root,_) = get_ancestor(store, root, epoch_first_slot)
+    return ancestor_root
+```
+
+
+### `is_supporting_vote`
+
+```python
+def is_supporting_vote(store: Store, root: Root, is_payload_present: bool, message_root: Root) -> bool:
+    """
+    returns whether a vote for ``message_root`` supports the chain containing the beacon block ``root`` with the
+    payload contents indicated by ``is_payload_present``.
+    """
+    (ancestor_root, is_ancestor_full) =  get_ancestor(store, message_root, store.blocks[root].slot)
+    return (root == ancestor_root) and (is_payload_preset == is_ancestor_full)
+```
+
+### Modified `get_weight`
+
+**Note:** `get_weight` is modified to only count votes for descending chains that support the status of a pair `Root, bool`, where the `bool` indicates if the block was full or not. 
+
+```python
+def get_weight(store: Store, root: Root, is_payload_present: bool) -> Gwei:
+    state = store.checkpoint_states[store.justified_checkpoint]
+    unslashed_and_active_indices = [
+        i for i in get_active_validator_indices(state, get_current_epoch(state))
+        if not state.validators[i].slashed
+    ]
+    attestation_score = Gwei(sum(
+        state.validators[i].effective_balance for i in unslashed_and_active_indices
+        if (i in store.latest_messages
+            and i not in store.equivocating_indices
+            and is_supporting_vote(store, root, is_payload_present, store.latest_messages[i].root))
+    ))
+    if store.proposer_boost_root == Root():
+        # Return only attestation score if ``proposer_boost_root`` is not set
+        return attestation_score
+
+    # Calculate proposer score if ``proposer_boost_root`` is set
+    proposer_score = Gwei(0)
+    # Boost is applied if ``root`` is an ancestor of ``proposer_boost_root``
+    (ancestor_root, is_ancestor_full) = get_ancestor(store, store.proposer_boost_root, store.blocks[root].slot)
+    if (ancestor_root == root) and (is_ancestor_full == is_payload_present):
+        committee_weight = get_total_active_balance(state) // SLOTS_PER_EPOCH
+        proposer_score = (committee_weight * PROPOSER_SCORE_BOOST) // 100
+    return attestation_score + proposer_score
+```
+
+### Modified `get_head` 
+
+**Note:** `get_head` is modified to use the new `get_weight` function. It returns the Beacon block root of the head block and whether its payload is considered present or not. 
+
+```python
+def get_head(store: Store) -> tuple[Root, bool]:
+    # Get filtered block tree that only includes viable branches
+    blocks = get_filtered_block_tree(store)
+    # Execute the LMD-GHOST fork choice
+    head_root = store.justified_checkpoint.root
+    head_full = is_payload_present(store, head_root)
+    while True:
+        children = [
+            (root, present) for root in blocks.keys()
+            if blocks[root].parent_root == head for present in (True, False)
+        ]
+        if len(children) == 0:
+            return (head_root, head_full)
+        # Sort by latest attesting balance with ties broken lexicographically
+        # Ties broken by favoring block with lexicographically higher root
+        # Ties then broken by favoring full blocks
+        # TODO: Can (root, full), (root, empty) have the same weight?
+        head = max(children, key=lambda (root, present): (get_weight(store, root, present), root, present))
+```
+
 ## Updated fork-choice handlers
 
 ### `on_block`
