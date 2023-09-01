@@ -77,7 +77,7 @@ This is the beacon chain specification of the enshrined proposer builder separat
 
 *Note:* This specification is built upon [Deneb](../../deneb/beacon-chain.md) and is under active development.
 
-This feature adds new staked consensus participants called *Builders* and new honest validators duties called *payload timeliness attestations*. The slot is divided in **four** intervals as opposed to the current three. Honest validators gather *signed bids* from builders and submit their consensus blocks (a `SignedBlindedBeaconBlock`) at the beginning of the slot. At the start of the second interval, honest validators submit attestations just as they do previous to this feature). At the  start of the third interval, aggregators aggregate these attestations (exactly as before this feature) and the honest builder reveals the full payload. At the start of the fourth interval, some honest validators selected to be members of the new **Payload Timeliness Committee** attest to the presence of the builder's payload.
+This feature adds new staked consensus participants called *Builders* and new honest validators duties called *payload timeliness attestations*. The slot is divided in **four** intervals as opposed to the current three. Honest validators gather *signed bids* from builders and submit their consensus blocks (a `SigneddBeaconBlock`) at the beginning of the slot. At the start of the second interval, honest validators submit attestations just as they do previous to this feature). At the  start of the third interval, aggregators aggregate these attestations (exactly as before this feature) and the honest builder reveals the full payload. At the start of the fourth interval, some honest validators selected to be members of the new **Payload Timeliness Committee** attest to the presence of the builder's payload.
 
 At any given slot, the status of the blockchain's head may be either 
 - A *full* block from a previous slot (eg. the current slot's proposer did not submit its block). 
@@ -453,7 +453,7 @@ def is_valid_indexed_payload_attestation(state: BeaconState, indexed_payload_att
 ```python
 def get_ptc(state: BeaconState, slot: Slot) -> Vector[ValidatorIndex, PTC_SIZE]:
     """
-    Get the ptc committee for the give ``slot``
+    Get the ptc committee for the given ``slot``
     """
     epoch = compute_epoch_at_slot(slot)
     committees_per_slot = bit_floor(max(get_committee_count_per_slot(state, epoch), PTC_SIZE))
