@@ -117,3 +117,13 @@ F[N+3, Full] --> G
 F ~~~ E
 ```
 In this case all the attesters for `N+1` will be counted depending on the PTC members that voted for `(N+1, Full)`. Assuming honest PTC members, they would have voted for `N` during `N+1` so any CL attesters for `N+1` would be voting for `N+1, Empty` thus only counting for the head in `(N+3, Full)`. 
+
+## Equivocations
+
+There is no need to do anything about proposer equivocations. Builders should reveal their block anyway. 
+
+- At the time of reveal, the builder already has counted attestations for the current CL blocks, even if there are or not equivocations. Any equivocation available at this time will not have transactions that can unbundle him since he hasn't revealed. 
+- If the original block to which the builder committed is included, then the builder doesn't lose anything, that was the original intent. So if the original block is the overwhelming winner at the time of reveal, the builder can simply reveal and be safe that if there are any equivocations anyway his block was included. 
+- If the builder reveals, he knows that he can never be unbundled unless the next committee has a majority of malicious validators: attestations will go for an empty block before a block that is revealed after 8 seconds. 
+- So since the builder cannot be unbundled, then he either doesn't pay if the block is not included, or pays and its included. 
+- The splitting grief, that is, the proposer's block has about 50% of the vote at 8 seconds, remains. 
