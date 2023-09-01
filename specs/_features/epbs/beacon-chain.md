@@ -197,13 +197,6 @@ class IndexedPayloadAttestation(Container):
     signature: BLSSignature
 ```
 
-#### `SignedExecutionPayloadHeader`
-
-```python
-class SignedExecutionPayloadHeader(Container):
-    message: ExecutionPayloadHeader
-    signature: BLSSignature
-```
 #### `ExecutionPayloadHeaderEnvelope`
 
 ```python
