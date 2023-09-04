@@ -155,6 +155,7 @@ For a further introduction please refer to this [ethresear.ch article](https://e
 | Name | Value |
 | - | - |
 | `MAX_PAYLOAD_ATTESTATIONS` | `2**1` (= 2) # (New in ePBS) |
+| `MAX_EXECUTION_LAYER_WITHDRAW_REQUESTS` | `2**4` (= 16) # (New in ePBS) |
 
 ### Incentivization weights
 
@@ -343,6 +344,8 @@ class BeaconBlockBody(Container):
     # PBS
     signed_execution_payload_header_envelope: SignedExecutionPayloadHeaderEnvelope  # [New in ePBS]
     payload_attestations: List[PayloadAttestation, MAX_PAYLOAD_ATTESTATIONS] # [New in ePBS]
+    execution_payload_withdraw_requests: List[ExecutionLayerWithdrawRequest, MAX_EXECUTION_LAYER_WITHDRAW_REQUESTS] # [New in ePBS]
+    
 ```
 
 #### `ExecutionPayload`
@@ -1045,7 +1048,7 @@ def process_operations(state: BeaconState, body: BeaconBlockBody) -> None:
     for_ops(body.voluntary_exits, process_voluntary_exit)
     for_ops(body.bls_to_execution_changes, process_bls_to_execution_change)
     for_ops(body.payload_attestations, process_payload_attestation) # [New in ePBS]
-    for_ops(body.execution_payload_withdraw_request, process_execution_layer_withdraw_request) # [New in ePBS]
+    for_ops(body.execution_payload_withdraw_requests, process_execution_layer_withdraw_request) # [New in ePBS]
 ```
 
 ##### Modified Proposer slashings
