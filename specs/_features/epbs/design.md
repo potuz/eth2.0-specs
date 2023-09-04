@@ -127,3 +127,6 @@ There is no need to do anything about proposer equivocations. Builders should re
 - If the builder reveals, he knows that he can never be unbundled unless the next committee has a majority of malicious validators: attestations will go for an empty block before a block that is revealed after 8 seconds. 
 - So since the builder cannot be unbundled, then he either doesn't pay if the block is not included, or pays and its included. 
 - The splitting grief, that is, the proposer's block has about 50% of the vote at 8 seconds, remains. 
+
+## Increased Max EB
+This PR includes the changes from [this PR](https://github.com/michaelneuder/consensus-specs/pull/3). In particular it includes execution layer triggerable withdrawals. 

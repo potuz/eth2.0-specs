@@ -207,7 +207,7 @@ def get_weight(store: Store, root: Root, is_payload_present: bool) -> Gwei:
     state = store.checkpoint_states[store.justified_checkpoint]
     unslashed_and_active_indices = [
         i for i in get_active_validator_indices(state, get_current_epoch(state))
-        if not state.validators[i].slashed
+        if not is_slashed_attester(state.validators[i])
     ]
     attestation_score = Gwei(sum(
         state.validators[i].effective_balance for i in unslashed_and_active_indices
