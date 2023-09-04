@@ -6,6 +6,10 @@
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
+- [Weak Subjectivity Period](#weak-subjectivity-period)
+  - [Calculating the Weak Subjectivity Period](#calculating-the-weak-subjectivity-period)
+    - [Modified `compute_weak_subjectivity_period`](#modified-compute_weak_subjectivity_period)
+
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 <!-- /TOC -->
 ## Weak Subjectivity Period

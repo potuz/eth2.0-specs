@@ -11,6 +11,8 @@
   - [PTC Rewards](#ptc-rewards)
   - [PTC Attestations](#ptc-attestations)
   - [Forkchoice changes](#forkchoice-changes)
+  - [Equivocations](#equivocations)
+  - [Increased Max EB](#increased-max-eb)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
