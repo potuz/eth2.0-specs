@@ -333,6 +333,7 @@ class SignedInclusionListSummary(Container):
 ```python
 class InclusionList(Container)
     summary: SignedInclusionListSummary
+    slot: Slot
     transactions: List[Transaction, MAX_TRANSACTIONS_PER_INCLUSION_LIST]
 ```
 
