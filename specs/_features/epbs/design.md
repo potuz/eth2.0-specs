@@ -37,7 +37,7 @@ ePBS introduces forward inclusion lists for proposers to guarantee censor resist
 There is a new entity `Builder` that is a glorified validator (they are simply validators with a different withdrawal prefix `0x0b`) required to have a higher stake and required to sign when producing execution payloads. 
 
 - Builders are also validators (otherwise their staked capital depreciates).
-- We onboard builders by simply turning validators into builders if they achieve the necessary minimum balance (this way we avoid two forks to onboard builders and keep the same deposit flow, avoid builders to skip the entry churn), we change their withdrawal prefix to be distinguished from normal validators.
+- There is nothing to be done to onboard builders as we can simply accept validators with the right `0x0b` withdrawal prefix before the fork. They will be builders automatically. We could however onboard builders by simply turning validators into builders if they achieve the necessary minimum balance and change their withdrawal prefix to be distinguished from normal validators at the fork. 
 - We need to include several changes from the [MaxEB PR](https://github.com/michaelneuder/consensus-specs/pull/3) in order to account with builders having an increased balance that would otherwise depreciate. 
 
 ## Builder Payments
