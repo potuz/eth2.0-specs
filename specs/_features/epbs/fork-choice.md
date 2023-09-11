@@ -251,7 +251,8 @@ def get_head(store: Store) -> tuple[Root, bool]:
         # Ties broken by favoring block with lexicographically higher root
         # Ties then broken by favoring full blocks
         # TODO: Can (root, full), (root, empty) have the same weight?
-        head = max(children, key=lambda (root, present): (get_weight(store, root, present), root, present))
+        head_root = max(children, key=lambda (root, present): (get_weight(store, root, present), root, present))
+        head_full = is_payload_present(store, head_root)
 ```
 
 ## Updated fork-choice handlers
