@@ -124,6 +124,10 @@ In this case all the attesters for `N+1` will be counted depending on the PTC me
 ### Checkpoint states
 There is no current change in `store.checkpoint_states[root]`. In principle the "checkpoint state" should correspond to either the checkpoint block being full or empty. However, payload status does not change any consensus value for the state at the given time, so it does not matter if we continue using `store.block_states` which corresponds to the "empty" case. 
 
+### Block slot
+
+Currently there is no complete implementation of (block, slot) vote: colluding proposers can in principle reveal a late block and base the next block on top of it. TODO: Fix this
+
 ## Equivocations
 
 There is no need to do anything about proposer equivocations. Builders should reveal their block anyway. 
