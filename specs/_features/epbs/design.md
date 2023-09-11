@@ -59,6 +59,7 @@ So when importing the CL block for slot N, we process the expected withdrawals a
 - PTC members are obtained as the first members from each beacon slot committee that are not builders.
 - attesters are rewarded as a full attestation when they get the right payload presence: that is, if they vote for full (resp. empty) and the payload is included (resp. not included) then they get their participation bits (target, source and head timely) set. Otherwise they get a penalty as a missed attestation. 
 - Attestations to the CL block from these members are just ignored. 
+- The proposer for slot N+1 must include PTC attestations for slot N. There is no rewards (and therefore no incentive) for the proposer to include attestations that voted incorrectly, perhaps we can simply accept 1 PTC attestation per block instead of the current two. 
 
 ## PTC Attestations
 
@@ -119,6 +120,9 @@ F[N+3, Full] --> G
 F ~~~ E
 ```
 In this case all the attesters for `N+1` will be counted depending on the PTC members that voted for `(N+1, Full)`. Assuming honest PTC members, they would have voted for `N` during `N+1` so any CL attesters for `N+1` would be voting for `N+1, Empty` thus only counting for the head in `(N+3, Full)`. 
+
+### Checkpoint states
+There is no current change in `store.checkpoint_states[root]`. In principle the "checkpoint state" should correspond to either the checkpoint block being full or empty. However, payload status does not change any consensus value for the state at the given time, so it does not matter if we continue using `store.block_states` which corresponds to the "empty" case. 
 
 ## Equivocations
 
