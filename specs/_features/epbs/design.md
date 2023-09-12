@@ -11,6 +11,8 @@
   - [PTC Rewards](#ptc-rewards)
   - [PTC Attestations](#ptc-attestations)
   - [Forkchoice changes](#forkchoice-changes)
+    - [Checkpoint states](#checkpoint-states)
+    - [Block slot](#block-slot)
   - [Equivocations](#equivocations)
   - [Increased Max EB](#increased-max-eb)
 
@@ -126,7 +128,29 @@ There is no current change in `store.checkpoint_states[root]`. In principle the 
 
 ### Block slot
 
-Currently there is no complete implementation of (block, slot) vote: colluding proposers can in principle reveal a late block and base the next block on top of it. TODO: Fix this
+Honest validators that vote for a parent block when a block is late, are contributing for this parent block support and are explicitly attesting that the current block is not present. This is taken into account in the new computation of `get_head`. Consider the following situation
+```mermaid
+graph RL
+A[N-1, Full]
+B[N, Full] --> A
+```
+The block `N` has arrived late and the whole committee sees `A` as head and vote for `N-1`. At the start of `N+1` a call to `get_head` will return `N-1` as head and thus if the proposer of `N+1` is honest it will base its block on `N-1`. Suppose however that the proposer bases his block on top of `N`. Then we see 
+```mermaid
+graph RL
+A[N-1, Full]
+B[N, Full] --> A
+C[N+1, Full] --> B
+```
+This block was timely so it gets proposer Boost. The real DAG is
+```mermaid
+graph RL
+A[N-1, Full]
+B[N, Full] --> A
+C[N+1, Full] --> B
+D[N-1, Full] --> A
+E[N-1, Full] --> D
+```
+And honest validators should still see `N-1` as head. The reason being that at the attestation deadline on `N+1` validators have seen block `N+1` appear, this block is valid and has 40% of a committee vote because of proposer boost. However, the branch for `N-1` has the full committee from `N` that has voted for it, and thus honest validators vote for `N-1` as valid. 
 
 ## Equivocations
 
@@ -137,6 +161,29 @@ There is no need to do anything about proposer equivocations. Builders should re
 - If the builder reveals, he knows that he can never be unbundled unless the next committee has a majority of malicious validators: attestations will go for an empty block before a block that is revealed after 8 seconds. 
 - So since the builder cannot be unbundled, then he either doesn't pay if the block is not included, or pays and its included. 
 - The splitting grief, that is, the proposer's block has about 50% of the vote at 8 seconds, remains. 
+
+A little care has to be taken in the case of colluding proposers for `N` and `N+1`. Consider the example of the [previous section](#block-slot). The malicious proposer of `N` sends an early block to the builder and an equivocation after it has seen the payload. No honest validators will have voted for this equivocation. Suppose $\beta$ is the malicious stake. We have $1 - \beta$ for that votes for the early `N` as head and $\beta$ that will vote for the lately revealed block. Assuming $\beta < 0.5$ we have that the PTC committee will declare the equivocation as empty. The malicious proposer of `N+1` proposes based on the equivocating block `N` including some unbundled transactions. Because of the PTC vote, even the $\beta$ attestations for the equivocating block `N` will not count for `N+1` since it builds on *full* instead of empty. The weight of `N+1` is only given by proposer boost. The weight of the early `N` will be $1 - \beta$ thus beating the malicious `N+1` if $\beta < 0.6$ and thus honest validators will vote for the early `N` that included the builders' payload. However, the early block itself may cause a split view, in this case some attesters may have voted for `N-1` as head! in this situation we would have a DAG like this (we are not considering irrelevant branches)
+```mermaid
+graph RL
+A[N-1, Full]
+B[N, Full] --> A
+H[N, Full] --> B
+F[N', Full] --> A
+I[N', Empty] --> A
+C[N+1, Full] --> F
+D[N-1, Full] --> A
+E[N-1, Full] --> D
+```
+
+When recursing from the children of `N-1` the weights for the three children are as follows (when computing after `N+1` has been revealed and before validators for `N+1` attested)
+- (N, Full) has gotten some vote $\gamma \leq 1 - \beta$. 
+- (N', Full) has zero weight. This is an important point. Proposer boost does not apply to it because even though $N+1$ will get proposer boost, it is based on the wrong `PTC` vote, and thus it does not count towards this node's weight. 
+- (N', Empty) has $\beta$ maximum. 
+- (N-1, Full) has $1 - \beta - \gamma$. 
+
+Thus, supposing $\gamma < \beta$ we have that $1 - \beta - \gamma > 1 - 2 \beta > \beta$ as long as $\beta < 1/3$. Thus we are protected from these kinds of attacks from attackers up to 33%. 
+
+Note however that if we were to apply proposer boost to `(N', Full)` then we see that there's a split now between the three possible heads. `N'` has proposer boost giving it $0.4$ so if $\gamma = 0.39$ we get that with $1 - \beta - \gamma < 0.4$ whenever $\beta \geq 0.2$. Thus a 20% attacker that can also split the network, would be able to carry this attack with two consecutive blocks. 
 
 ## Increased Max EB
 This PR includes the changes from [this PR](https://github.com/michaelneuder/consensus-specs/pull/3). In particular it includes execution layer triggerable withdrawals. 

@@ -8,6 +8,8 @@
 - [Introduction](#introduction)
 - [Constant](#constant)
 - [Helpers](#helpers)
+  - [Modified `LatestMessage`](#modified-latestmessage)
+  - [Modified `update_latest_messages`](#modified-update_latest_messages)
   - [Modified `Store`](#modified-store)
   - [`verify_inclusion_list`](#verify_inclusion_list)
   - [`is_inclusion_list_available`](#is_inclusion_list_available)
@@ -38,6 +40,29 @@ This is the modification of the fork choice accompanying the ePBS upgrade.
 | `PAYLOAD_TIMELY_THRESHOLD` | `PTC_SIZE/2` (=`uint64(256)`) | 
 
 ## Helpers
+
+### Modified `LatestMessage`
+**Note:** The class is modified to keep track of the slot instead of the epoch
+
+```python
+@dataclass(eq=True, frozen=True)
+class LatestMessage(object):
+    slot: Slot
+    root: Root
+```
+
+### Modified `update_latest_messages`
+**Note:** the function `update_latest_messages` is updated to use the attestation slot instead of target. Notice that this function is only called on validated attestations and validators cannot attest twice in the same epoch without equivocating. Notice also that target epoch number and slot number are validated on `validate_on_attestation`. 
+
+```python
+def update_latest_messages(store: Store, attesting_indices: Sequence[ValidatorIndex], attestation: Attestation) -> None:
+    slot = attestation.data.slot
+    beacon_block_root = attestation.data.beacon_block_root
+    non_equivocating_attesting_indices = [i for i in attesting_indices if i not in store.equivocating_indices]
+    for i in non_equivocating_attesting_indices:
+        if i not in store.latest_messages or slot > store.latest_messages[i].slot:
+            store.latest_messages[i] = LatestMessage(slot=slot, root=beacon_block_root)
+```
 
 ### Modified `Store` 
 **Note:** `Store` is modified to track the intermediate states of "empty" consensus blocks, that is, those consensus blocks for which the corresponding execution payload has not been revealed or has not been included on chain. 
@@ -189,21 +214,27 @@ def get_checkpoint_block(store: Store, root: Root, epoch: Epoch) -> Root:
 ### `is_supporting_vote`
 
 ```python
-def is_supporting_vote(store: Store, root: Root, is_payload_present: bool, message_root: Root) -> bool:
+def is_supporting_vote(store: Store, root: Root, slot: Slot, is_payload_present: bool, message: LatestMessage) -> bool:
     """
     returns whether a vote for ``message_root`` supports the chain containing the beacon block ``root`` with the
-    payload contents indicated by ``is_payload_present``.
+    payload contents indicated by ``is_payload_present`` as head during slot ``slot``.
     """
-    (ancestor_root, is_ancestor_full) =  get_ancestor(store, message_root, store.blocks[root].slot)
+    if root == message_root:
+        # an attestation for a given root always counts for that root regardless if full or empty
+        return slot <= message.slot
+    message_block = store.blocks[message_root]
+    if slot > message_block.slot:
+        return False
+    (ancestor_root, is_ancestor_full) =  get_ancestor(store, message_root, slot)
     return (root == ancestor_root) and (is_payload_preset == is_ancestor_full)
 ```
 
 ### Modified `get_weight`
 
-**Note:** `get_weight` is modified to only count votes for descending chains that support the status of a pair `Root, bool`, where the `bool` indicates if the block was full or not. 
+**Note:** `get_weight` is modified to only count votes for descending chains that support the status of a triple `Root, Slot, bool`, where the `bool` indicates if the block was full or not. 
 
 ```python
-def get_weight(store: Store, root: Root, is_payload_present: bool) -> Gwei:
+def get_weight(store: Store, root: Root, slot: Slot, is_payload_present: bool) -> Gwei:
     state = store.checkpoint_states[store.justified_checkpoint]
     unslashed_and_active_indices = [
         i for i in get_active_validator_indices(state, get_current_epoch(state))
@@ -213,7 +244,7 @@ def get_weight(store: Store, root: Root, is_payload_present: bool) -> Gwei:
         state.validators[i].effective_balance for i in unslashed_and_active_indices
         if (i in store.latest_messages
             and i not in store.equivocating_indices
-            and is_supporting_vote(store, root, is_payload_present, store.latest_messages[i].root))
+            and is_supporting_vote(store, root, slot, is_payload_present, store.latest_messages[i]))
     ))
     if store.proposer_boost_root == Root():
         # Return only attestation score if ``proposer_boost_root`` is not set
@@ -239,19 +270,27 @@ def get_head(store: Store) -> tuple[Root, bool]:
     blocks = get_filtered_block_tree(store)
     # Execute the LMD-GHOST fork choice
     head_root = store.justified_checkpoint.root
+    head_block = store.blocks[head_root]
+    head_slot = head_block.slot
     head_full = is_payload_present(store, head_root)
     while True:
         children = [
-            (root, present) for root in blocks.keys()
-            if blocks[root].parent_root == head_root for present in (True, False)
+            (root, block.slot, present) for (root, block) in blocks.items()
+            if block.parent_root == head_root for present in (True, False)
         ]
         if len(children) == 0:
             return (head_root, head_full)
+        # if we have children we consider the current head advanced as a possible head 
+        children += [(head_root, head_slot + 1, head_full)]
         # Sort by latest attesting balance with ties broken lexicographically
-        # Ties broken by favoring block with lexicographically higher root
-        # Ties then broken by favoring full blocks
+        # Ties broken by favoring full blocks
+        # Ties broken then by favoring higher slot numbers
+        # Ties then broken by favoring block with lexicographically higher root
         # TODO: Can (root, full), (root, empty) have the same weight?
-        head_root = max(children, key=lambda (root, present): (get_weight(store, root, present), root, present))
+        child_root = max(children, key=lambda (root, slot, present): (get_weight(store, root, slot, present), present, slot, root))
+        if child_root == head_root:
+            return (head_root, head_full)
+        head_root = child_root
         head_full = is_payload_present(store, head_root)
 ```
 
