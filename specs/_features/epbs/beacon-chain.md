@@ -487,7 +487,7 @@ class BeaconState(Container):
     # Deep history valid from Capella onwards
     historical_summaries: List[HistoricalSummary, HISTORICAL_ROOTS_LIMIT]
     # PBS
-    signed_execution_payload_header_envelope: SignedExecutionPayloadHeaderEnvelop # [New in ePBS]
+    signed_execution_payload_header_envelope: SignedExecutionPayloadHeaderEnvelope # [New in ePBS]
     last_withdrawals_root: Root # [New in ePBS]
     deposit_balance_to_consume: Gwei # [New in ePBS]
     exit_balance_to_consume: Gwei # [New in ePBS]
@@ -1391,7 +1391,7 @@ def process_execution_payload(state: BeaconState, signed_envelope: SignedExecuti
     assert envelope.beacon_block_root == hash_tree_root(state.latest_block_header)
     # Verify consistency with the committed header
     hash = hash_tree_root(payload)
-    commited_envelope = state.signed_execution_payload_header_envelope.message
+    committed_envelope = state.signed_execution_payload_header_envelope.message
     previous_hash = hash_tree_root(committed_envelope.payload)
     assert hash == previous_hash
     # Verify consistency with the envelope
@@ -1406,7 +1406,7 @@ def process_execution_payload(state: BeaconState, signed_envelope: SignedExecuti
         )
     )
     # Cache the execution payload header
-    state.latest_execution_payload_header = committed_envelope.payload
+    state.latest_execution_payload_header = committed_envelope.header
     # Verify the state root
     assert envelope.state_root == hash_tree_root(state)
 ```
