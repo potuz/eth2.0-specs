@@ -141,7 +141,7 @@ def is_inclusion_list_available(state: BeaconState, block: BeaconBlock) -> bool:
     """
     # Verify that the list is empty if the parent consensus block did not contain a payload
     if state.signed_execution_payload_header_envelope.message.header != state.latest_execution_payload_header:
-        return true
+        return True
 
     # verify the inclusion list
     inclusion_list = retrieve_inclusion_list(block.slot, block.proposer_index)
@@ -159,7 +159,7 @@ def notify_ptc_messages(store: Store, state: BeaconState, payload_attestations: 
         indexed_payload_attestation = get_indexed_payload_attestation(state, state.slot - 1, payload_attestation)
         for idx in indexed_payload_attestation.attesting_indices:
             store.on_payload_attestation_message(PayloadAttestationMessage(validator_index=idx,
-                    data=payload_attestation.data, signature: BLSSignature(), is_from_block=true)
+                    data=payload_attestation.data, signature= BLSSignature(), is_from_block=true)
 ```
 
 ### `is_payload_present`
@@ -167,12 +167,12 @@ def notify_ptc_messages(store: Store, state: BeaconState, payload_attestations: 
 ```python
 def is_payload_present(store: Store, beacon_block_root: Root) -> bool:
     """
-    return wether the execution payload for the beacon block with root ``beacon_block_root`` was voted as present 
+    return whether the execution payload for the beacon block with root ``beacon_block_root`` was voted as present 
     by the PTC
     """
     # The beacon block root must be known
     assert beacon_block_root in store.ptc_vote
-    return ptc_vote[beacon_block_root].count(True) > PAYLOAD_TIMELY_THRESHOLD
+    return store.ptc_vote[beacon_block_root].count(True) > PAYLOAD_TIMELY_THRESHOLD
 ```
 
 ### Modified `get_ancestor` 
@@ -396,7 +396,7 @@ def on_excecution_payload(store: Store, signed_envelope: SignedExecutionPayloadE
     process_execution_payload(state, signed_envelope, EXECUTION_ENGINE)
 
     #Add new state for this payload to the store
-    store.execution_payload_states[beacon_block_root] = state
+    store.execution_payload_states[envelope.beacon_block_root] = state
 ```   
 
 ### `on_payload_attestation_message`
