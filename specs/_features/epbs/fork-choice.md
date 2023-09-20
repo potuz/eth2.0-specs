@@ -20,6 +20,7 @@
   - [`is_supporting_vote`](#is_supporting_vote)
   - [Modified `get_weight`](#modified-get_weight)
   - [Modified `get_head`](#modified-get_head)
+  - [New `get_block_hash`](#new-get_block_hash)
 - [Updated fork-choice handlers](#updated-fork-choice-handlers)
   - [`on_block`](#on_block)
 - [New fork-choice handlers](#new-fork-choice-handlers)
@@ -294,6 +295,20 @@ def get_head(store: Store) -> tuple[Root, bool]:
         head_full = is_payload_present(store, head_root)
 ```
 
+### New `get_block_hash`
+
+```python
+def get_blockhash(store: Store, root: Root) -> Hash32:
+    """
+    returns the blockHash of the latest execution payload in the chain containing the 
+    beacon block with root ``root``
+    """
+    # The block is known 
+    if is_payload_present(store, root):
+        return hash(store.execution_payload_states[root].latest_block_header)
+    return hash(store.block__states[root].latest_block_header)
+```
+    
 ## Updated fork-choice handlers
 
 ### `on_block`
