@@ -15,6 +15,7 @@
     - [Block slot](#block-slot)
   - [Equivocations](#equivocations)
   - [Increased Max EB](#increased-max-eb)
+  - [Validator transfers](#validator-transfers)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -187,3 +188,6 @@ Note however that if we were to apply proposer boost to `(N', Full)` then we see
 
 ## Increased Max EB
 This PR includes the changes from [this PR](https://github.com/michaelneuder/consensus-specs/pull/3). In particular it includes execution layer triggerable withdrawals. 
+
+## Validator transfers
+One of the main problems of the current design is that a builder can transfer arbitrary amounts to proposers by simply paying a large bid. This is dangerous from a forkchoice perspective as it moves weights from one branch to another instantaneously, it may prevent a large penalty in case of slashing, etc. In order to partially mitigate this, we churn the transfer overloading the deposit system of Max EB, that is we append a `PendingBalanceDeposit` object to the beacon state. This churns the increase in the proposer's balance while it discounts immediately the balance of the builder. We may want to revisit this and add also an exit churn and even deal with equivocations on future iterations. 

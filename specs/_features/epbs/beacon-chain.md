@@ -1350,13 +1350,13 @@ def verify_execution_payload_header_envelope_signature(state: BeaconState,
 def process_execution_payload_header(state: BeaconState, block: BeaconBlock) -> None:
     signed_header_envelope = block.body.signed_execution_payload_header_envelope
     assert verify_execution_payload_header_envelope_signature(state, signed_header_envelope)
-    # Check that the builder has funds to cover the bid and transfer the funds
+    # Check that the builder has funds to cover the bid and schedule the funds for transfer
     envelope = signed_header_envelope.message
     builder_index = envelope.builder_index
     amount = envelope.value
     assert state.balances[builder_index] >= amount: 
     decrease_balance(state, builder_index, amount)
-    increase_balance(state, block.proposer_index, amount)
+    state.pending_balance_deposits.append(PendingBalanceDeposit(index=block.proposer_index, amount=amount))
     # Verify the withdrawals_root against the state cached ones
     assert header.withdrawals_root == state.last_withdrawals_root
     # Verify consistency of the parent hash with respect to the previous execution payload header
