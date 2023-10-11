@@ -37,6 +37,7 @@
     - [`SignedExecutionPayloadEnvelope`](#signedexecutionpayloadenvelope)
     - [`InclusionListSummaryEntry`](#inclusionlistsummaryentry)
     - [`InclusionListSummary`](#inclusionlistsummary)
+    - [`ExclusionListEntry`](#exclusionlistentry)
     - [`SignedInclusionListSummary`](#signedinclusionlistsummary)
     - [`InclusionList`](#inclusionlist)
   - [Modified containers](#modified-containers)
@@ -320,6 +321,14 @@ class InclusionListSummary(Container)
     summary: List[InclusionListSummaryEntry, MAX_TRANSACTIONS_PER_INCLUSION_LIST]
 ```
 
+#### `ExclusionListEntry`
+
+```python
+class ExclusionListEntry(Container):
+    block_index: uint64
+    summary_index: uint64
+```
+
 #### `SignedInclusionListSummary`
 
 ```python
@@ -408,7 +417,7 @@ class ExecutionPayload(Container):
     blob_gas_used: uint64
     excess_blob_gas: uint64
     inclusion_list_summary: SignedInclusionListSummary # [New in ePBS]
-    inclusion_list_exclusions: List[uint64, MAX_TRANSACTIONS_PER_INCLUSION_LIST] # [New in ePBS]
+    inclusion_list_exclusions: List[ExclusionListEntry, MAX_TRANSACTIONS_PER_INCLUSION_LIST] # [New in ePBS]
 ```
 
 #### `ExecutionPayloadHeader`
