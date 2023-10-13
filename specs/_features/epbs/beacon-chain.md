@@ -26,7 +26,7 @@
   - [New containers](#new-containers)
     - [`PendingBalanceDeposit`](#pendingbalancedeposit)
     - [`PartialWithdrawal`](#partialwithdrawal)
-    - [`ExecutionLayerWithdrawalRequest`](#executionlayerwithdrawalrequest)
+    - [`ExecutionLayerWithdrawRequest`](#executionlayerwithdrawrequest)
     - [`PayloadAttestationData`](#payloadattestationdata)
     - [`PayloadAttestation`](#payloadattestation)
     - [`PayloadAttestationMessage`](#payloadattestationmessage)
@@ -99,6 +99,7 @@
     - [New `verify_execution_payload_header_envelope_signature`](#new-verify_execution_payload_header_envelope_signature)
     - [New `process_execution_payload_header`](#new-process_execution_payload_header)
     - [New `verify_execution_payload_signature`](#new-verify_execution_payload_signature)
+    - [New `verify_inclusion_list_summary_signature`](#new-verify_inclusion_list_summary_signature)
     - [Modified `process_execution_payload`](#modified-process_execution_payload)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -223,10 +224,10 @@ class PartialWithdrawal(Container)
     withdrawable_epoch: Epoch
 ```
 
-#### `ExecutionLayerWithdrawalRequest`
+#### `ExecutionLayerWithdrawRequest`
 
 ```python
-class ExecutionLayerWithdrawalRequest(Container)
+class ExecutionLayerWithdrawRequest(Container)
     source_address: ExecutionAddress
     validator_pubkey: BLSPubkey
     balance: Gwei
@@ -293,6 +294,8 @@ class ExecutionPayloadEnvelope(Container):
     builder_index: ValidatorIndex
     beacon_block_root: Root
     blob_kzg_commitments: List[KZGCommitment, MAX_BLOB_COMMITMENTS_PER_BLOCK]
+    inclusion_list_proposer_index: ValidatorIndex
+    inclusion_list_signature: BLSSignature
     state_root: Root
 ```
 
@@ -407,7 +410,7 @@ class ExecutionPayload(Container):
     withdrawals: List[Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD]
     blob_gas_used: uint64
     excess_blob_gas: uint64
-    inclusion_list_summary: SignedInclusionListSummary # [New in ePBS]
+    inclusion_list_summary: List[InclusionListSummaryEntry, MAX_TRANSACTIONS_PER_INCLUSION_LIST] # [New in ePBS]
     inclusion_list_exclusions: List[uint64, MAX_TRANSACTIONS_PER_INCLUSION_LIST] # [New in ePBS]
 ```
 
@@ -487,6 +490,7 @@ class BeaconState(Container):
     # Deep history valid from Capella onwards
     historical_summaries: List[HistoricalSummary, HISTORICAL_ROOTS_LIMIT]
     # PBS
+    latest_execution_payload_proposer: ValidatorIndex # [New in ePBS]
     signed_execution_payload_header_envelope: SignedExecutionPayloadHeaderEnvelope # [New in ePBS]
     last_withdrawals_root: Root # [New in ePBS]
     deposit_balance_to_consume: Gwei # [New in ePBS]
@@ -1378,6 +1382,17 @@ def verify_execution_envelope_signature(state: BeaconState, signed_envelope: Sig
     return bls.Verify(builder.pubkey, signing_root, signed_envelope.signature)
 ```
 
+#### New `verify_inclusion_list_summary_signature`
+
+```python
+def verify_inclusion_list_summary_signature(state: BeaconState, signed_summary: SignedInclusionListSummary) -> bool:
+    # TODO: do we need a new domain?
+    summary = signed_summary.message
+    signing_root = compute_signing_root(summary, get_domain(state, DOMAIN_BEACON_PROPOSER))
+    proposer = state.validators[message.proposer_index]
+    return bls.Verify(proposer.pubkey, signing_root, signed_summary.signature)
+```
+
 #### Modified `process_execution_payload`
 *Note*: `process_execution_payload` is now an independent check in state transition. It is called when importing a signed execution payload proposed by the builder of the current slot.
 
@@ -1387,6 +1402,16 @@ def process_execution_payload(state: BeaconState, signed_envelope: SignedExecuti
     assert verify_execution_envelope_signature(state, signed_envelope)
     envelope = signed_envelope.message
     payload = envelope.payload
+    # Verify inclusion list proposer
+    proposer_index = envelope.inclusion_list_proposer_index
+    assert proposer_index == state.latest_execution_payload_proposer
+    # Verify inclusion list summary signature
+    signed_summary = SignedInclusionListSummary(
+        message=InclusionListSummary(
+            proposer_index=proposer_index
+            summary=payload.inclusion_list_summary)
+        signature=envelope.inclusion_list_signature)
+    assert verify_inclusion_list_summary_signature(state, signed_summary)
     # Verify consistency with the beacon block
     assert envelope.beacon_block_root == hash_tree_root(state.latest_block_header)
     # Verify consistency with the committed header
@@ -1405,8 +1430,9 @@ def process_execution_payload(state: BeaconState, signed_envelope: SignedExecuti
             parent_beacon_block_root=state.latest_block_header.parent_root,
         )
     )
-    # Cache the execution payload header
+    # Cache the execution payload header and proposer
     state.latest_execution_payload_header = committed_envelope.header
+    state.latest_execution_payload_proposer = proposer_index
     # Verify the state root
     assert envelope.state_root == hash_tree_root(state)
 ```

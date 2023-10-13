@@ -102,10 +102,7 @@ def verify_inclusion_list(state: BeaconState, block: BeaconBlock, inclusion_list
     assert block.proposer_index == proposer_index
 
     # Check that the signature is correct
-    # TODO: do we need a new domain?
-    signing_root = compute_signing_root(signed_summary.message, get_domain(state, DOMAIN_BEACON_PROPOSER))
-    proposer = state.validators[proposer_index]
-    assert bls.Verify(proposer.pubkey, signing_root, signed_summary.signature)
+    assert verify_inclusion_list_summary_signature(state, signed_summary)
  
     # TODO: These checks will also be performed by the EL surely so we can probably remove them from here.
     # Check the summary and transaction list lengths
@@ -217,16 +214,16 @@ def get_checkpoint_block(store: Store, root: Root, epoch: Epoch) -> Root:
 ```python
 def is_supporting_vote(store: Store, root: Root, slot: Slot, is_payload_present: bool, message: LatestMessage) -> bool:
     """
-    returns whether a vote for ``message_root`` supports the chain containing the beacon block ``root`` with the
+    returns whether a vote for ``message.root`` supports the chain containing the beacon block ``root`` with the
     payload contents indicated by ``is_payload_present`` as head during slot ``slot``.
     """
-    if root == message_root:
+    if root == message.root:
         # an attestation for a given root always counts for that root regardless if full or empty
         return slot <= message.slot
-    message_block = store.blocks[message_root]
+    message_block = store.blocks[message.root]
     if slot > message_block.slot:
         return False
-    (ancestor_root, is_ancestor_full) =  get_ancestor(store, message_root, slot)
+    (ancestor_root, is_ancestor_full) =  get_ancestor(store, message.root, slot)
     return (root == ancestor_root) and (is_payload_preset == is_ancestor_full)
 ```
 
