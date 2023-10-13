@@ -4,6 +4,7 @@
 
 - [ePBS design notes](#epbs-design-notes)
   - [Inclusion lists](#inclusion-lists)
+    - [Liveness](#liveness)
   - [Builders](#builders)
   - [Builder Payments](#builder-payments)
   - [Withdrawals](#withdrawals)
@@ -34,6 +35,11 @@ ePBS introduces forward inclusion lists for proposers to guarantee censor resist
 
 **Note:** in the event that the payload for the canonical block in slot N is not revealed, then the summaries and transactions list for slot N-1 remains valid, the honest proposer for slot N+1 is not allowed to submit a new IL and any such message will be ignored. The builder for N+1 still has to satisfy the summary of N-1. If there are k slots in a row that are missing payloads, the next full slot will still need to satisfy the inclusion list for N-1. 
 
+### Liveness
+
+In the usual case of LMD+Ghost we have a proof of the *plausible liveness* theorem, that is that supermajority links can always be added to produce new finalized checkpoints provided there exist children extending the finalized chain. Here we prove that the next builder can always produce a valid payload, in particular, a payload that can satisfy the pending inclusion list. 
+
+Let N be the last slot which contained a full execution payload, and let $N+1,..., N+k$, $k \geq 1$ be slots in the canonical chain, descending from $N$ that were either skipped or are *empty*, that is, the corresponding execution payload has not been revealed or hasn't been included. The consensus block for $N+k$ has been proposed and it is the canonical head. The builder for $N+k$ has to fulfill the inclusion list proposed by $N$. When importing the block $N$, validators have attested for the 
 
 ## Builders
 

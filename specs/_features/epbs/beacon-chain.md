@@ -57,6 +57,7 @@
     - [Modified `is_fully_withdrawable_validator`](#modified-is_fully_withdrawable_validator)
     - [`is_partially_withdrawable_validator`](#is_partially_withdrawable_validator)
     - [`is_valid_indexed_payload_attestation`](#is_valid_indexed_payload_attestation)
+    - [`is_parent_block_full`](#is_parent_block_full)
   - [Beacon State accessors](#beacon-state-accessors)
     - [Modified `get_eligible_validator_indices`](#modified-get_eligible_validator_indices)
     - [`get_ptc`](#get_ptc)
@@ -490,7 +491,8 @@ class BeaconState(Container):
     # Deep history valid from Capella onwards
     historical_summaries: List[HistoricalSummary, HISTORICAL_ROOTS_LIMIT]
     # PBS
-    latest_execution_payload_proposer: ValidatorIndex # [New in ePBS]
+    previous_inclusion_list_proposer: ValidatorIndex # [New in ePBS]
+    latest_inclusion_list_proposer: ValidatorIndex # [New in ePBS]
     signed_execution_payload_header_envelope: SignedExecutionPayloadHeaderEnvelope # [New in ePBS]
     last_withdrawals_root: Root # [New in ePBS]
     deposit_balance_to_consume: Gwei # [New in ePBS]
@@ -615,6 +617,13 @@ def is_valid_indexed_payload_attestation(state: BeaconState, indexed_payload_att
     domain = get_domain(state, DOMAIN_PTC_ATTESTER, None)
     signing_root = compute_signing_root(indexed_payload_attestation.data, domain)
     return bls.FastAggregateVerify(pubkeys, signing_root, indexed_payload_attestation.signature)
+```
+
+#### `is_parent_block_full`
+
+```python
+def is_parent_block_full(state: BeaconState) -> bool:
+    return state.signed_execution_payload_header_envelope.message.header == state.latest_execution_payload_header
 ```
 
 ### Beacon State accessors
@@ -1369,6 +1378,9 @@ def process_execution_payload_header(state: BeaconState, block: BeaconBlock) -> 
     assert header.prev_randao == get_randao_mix(state, get_current_epoch(state))
     # Verify timestamp
     assert header.timestamp == compute_timestamp_at_slot(state, state.slot)
+    # Cache the inclusion list proposer if the parent block was full
+    if is_parent_block_full(state):
+        state.latest_inclusion_list_proposer = block.proposer_index
     # Cache execution payload header envelope
     state.signed_execution_payload_header_envelope = signed_header_envelope
 ```
@@ -1404,7 +1416,7 @@ def process_execution_payload(state: BeaconState, signed_envelope: SignedExecuti
     payload = envelope.payload
     # Verify inclusion list proposer
     proposer_index = envelope.inclusion_list_proposer_index
-    assert proposer_index == state.latest_execution_payload_proposer
+    assert proposer_index == state.previous_inclusion_list_proposer
     # Verify inclusion list summary signature
     signed_summary = SignedInclusionListSummary(
         message=InclusionListSummary(
@@ -1432,7 +1444,7 @@ def process_execution_payload(state: BeaconState, signed_envelope: SignedExecuti
     )
     # Cache the execution payload header and proposer
     state.latest_execution_payload_header = committed_envelope.header
-    state.latest_execution_payload_proposer = proposer_index
+    state.previous_inclusion_list_proposer = state.latest_inclusion_list_proposer
     # Verify the state root
     assert envelope.state_root == hash_tree_root(state)
 ```

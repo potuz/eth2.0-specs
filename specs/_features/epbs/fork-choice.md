@@ -137,8 +137,8 @@ def is_inclusion_list_available(state: BeaconState, block: BeaconBlock) -> bool:
     Note: the p2p network does not guarantee sidecar retrieval outside of
     `MIN_SLOTS_FOR_INCLUSION_LISTS_REQUESTS`
     """
-    # Verify that the list is empty if the parent consensus block did not contain a payload
-    if state.signed_execution_payload_header_envelope.message.header != state.latest_execution_payload_header:
+    # Ignore the list if the parent consensus block did not contain a payload
+    if !is_parent_block_full(state):
         return True
 
     # verify the inclusion list
