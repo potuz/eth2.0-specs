@@ -5,6 +5,7 @@
 - [ePBS design notes](#epbs-design-notes)
   - [Inclusion lists](#inclusion-lists)
     - [Liveness](#liveness)
+    - [Censoring](#censoring)
   - [Builders](#builders)
   - [Builder Payments](#builder-payments)
   - [Withdrawals](#withdrawals)
@@ -39,7 +40,11 @@ ePBS introduces forward inclusion lists for proposers to guarantee censor resist
 
 In the usual case of LMD+Ghost we have a proof of the *plausible liveness* theorem, that is that supermajority links can always be added to produce new finalized checkpoints provided there exist children extending the finalized chain. Here we prove that the next builder can always produce a valid payload, in particular, a payload that can satisfy the pending inclusion list. 
 
-Let N be the last slot which contained a full execution payload, and let $N+1,..., N+k$, $k \geq 1$ be slots in the canonical chain, descending from $N$ that were either skipped or are *empty*, that is, the corresponding execution payload has not been revealed or hasn't been included. The consensus block for $N+k$ has been proposed and it is the canonical head. The builder for $N+k$ has to fulfill the inclusion list proposed by $N$. When importing the block $N$, validators have attested for the 
+Let N be the last slot which contained a full execution payload, and let $N+1,..., N+k$, $k \geq 1$ be slots in the canonical chain, descending from $N$ that were either skipped or are *empty*, that is, the corresponding execution payload has not been revealed or hasn't been included. The consensus block for $N+k$ has been proposed and it is the canonical head. The builder for $N+k$ has to fulfill the inclusion list proposed by $N$. When importing the block $N$, validators have attested for availability of at least one valid inclusion list. That is, those transactions would be executable on top of the head block at the time. Let $P$ be the execution payload included by the builder of $N$, this is the current head payload. Transactions in the attested inclusion list can *only* be invalid in a child of $P$ if there are transactions in $P$ that have the same source address and gas usage that was below the gas limit in the summary. For any such transaction the builder can add such transaction to the exclusion list and not include it in its payload. If there are remaining transactions in its payload from the same address, the nonce will have to be higher nonce than the transaction that was added in the exclusion list. This process can be repeated until there are no more transactions in the summary from that given address that have been invalidated. 
+
+### Censoring
+
+We prove the following: the builder cannot force a transaction in the inclusion list to revert due to gas limit usage. A malicious builder that attempts to add in the exclusion list some transactions from an address with high gas limit but low usage, so that the remaining transactions in the summary have lower gas limit and the included transaction with higher gas usage reverts. However, this is impossible since any transaction in the exclusion list has to have lower nonce since it was already included in the previous block. That is, any attempt by the builder of changing the order in which to include transactions in the exclusion list, will result in its payload being invalid, and thus the inclusion lists transactions that haven't been invalidated on N will remain valid for the next block. 
 
 ## Builders
 
