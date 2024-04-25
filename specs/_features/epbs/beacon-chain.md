@@ -321,6 +321,7 @@ class BeaconState(Container):
     next_sync_committee: SyncCommittee
     # Execution
     # latest_execution_payload_header: ExecutionPayloadHeader # [Removed in ePBS]
+    execution_payload_header: ExecutionPayloadHeader # [New in ePBS]
     # Withdrawals
     next_withdrawal_index: WithdrawalIndex
     next_withdrawal_validator_index: ValidatorIndex
@@ -333,7 +334,6 @@ class BeaconState(Container):
     latest_inclusion_list_slot: Slot # [New in ePBS]
     latest_block_hash: Hash32 # [New in ePBS]
     latest_full_slot: Slot # [New in ePBS]
-    execution_payload_header: ExecutionPayloadHeader # [New in ePBS]
     last_withdrawals_root: Root # [New in ePBS]
 ```
 
