@@ -153,6 +153,7 @@ The following validations MUST pass before forwarding the `payload_attestation_m
 - _[REJECT]_ `data.payload_status < PAYLOAD_INVALID_STATUS`
 - _[IGNORE]_ the `payload_attestation_message` is the first valid payload attestation message received from the validator index.
 - _[IGNORE]_ The attestation's `data.beacon_block_root` has been seen (via both gossip and non-gossip sources) (a client MAY queue attestation for processing once the block is retrieved. Note a client might want to request payload after).
+_ _[REJECT]_ The beacon block with root `data.beacon_block_root` passes validation. 
 - _[REJECT]_ The validator index is within the payload committee in `get_ptc(state, data.slot)`. For the current's slot head state. 
 - _[REJECT]_ The signature of `payload_attestation_message.signature` is valid with respect to the validator index.
     
