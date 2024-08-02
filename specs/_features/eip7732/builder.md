@@ -31,12 +31,11 @@ Builders can broadcast a payload bid for the current or the next slot's proposer
 1. Set `header.parent_block_hash` to the current head of the execution chain (this can be obtained from the beacon state as `state.last_block_hash`).
 2. Set `header.parent_block_root` to be the head of the consensus chain (this can be obtained from the beacon state as `hash_tree_root(state.latest_block_header)`. The `parent_block_root` and `parent_block_hash` must be compatible, in the sense that they both should come from the same `state` by the method described in this and the previous point. 
 3. Construct an execution payload. This can be performed with an external execution engine with a call to `engine_getPayloadV4`.
-4. Set `header.block_hash` to be the block hash of the constructed payload, that is `payload.block_hash`.
-5. Set `header.gas_limit` to be the gas limit of the constructed payload, that is `payload.gas_limit`.
-6. Set `header.builder_index` to be the validator index of the builder performing these actions.
-7. Set `header.slot`  to be the slot for which this bid is aimed. This slot **MUST** be either the current slot or the next slot.
-8. Set `header.value` to be the value that the builder will pay the proposer if the bid is accepted. The builder **MUST** have balance enough to fulfill this bid.
-9. Set `header.kzg_commitments_root` to be the `hash_tree_root`  of the `blobsbundle.commitments`  field returned by `engine_getPayloadV4`.
+4. Set `header.gas_limit` to be the gas limit of the constructed payload, that is `payload.gas_limit`.
+5. Set `header.builder_index` to be the validator index of the builder performing these actions.
+6. Set `header.slot`  to be the slot for which this bid is aimed. This slot **MUST** be either the current slot or the next slot.
+7. Set `header.value` to be the value that the builder will pay the proposer if the bid is accepted. The builder **MUST** have balance enough to fulfill this bid.
+8. Set `header.kzg_commitments_root` to be the `hash_tree_root`  of the `blobsbundle.commitments`  field returned by `engine_getPayloadV4`.
 
 After building the `header`, the builder obtains a `signature` of the header by using
 
@@ -104,7 +103,7 @@ When the proposer publishes a valid `SignedBeaconBlock` containing a signed comm
 
 To construct the `execution_payload_envelope` the builder must perform the following steps, we alias `header` to be the committed `ExecutionPayloadHeader` in the beacon block. 
 
-1. Set the `payload` field to be the `ExecutionPayload` constructed when creating the corresponding bid. This payload **MUST** have the same block hash as `header.block_hash`. 
+1. Set the `payload` field to be the `ExecutionPayload` constructed when creating the corresponding bid.
 2. Set the `builder_index` field to be the validator index of the builder performing these steps. This field **MUST** be `header.builder_index`. 
 3. Set `beacon_block_root` to be the `hash_tree_root` of the corresponding beacon block.
 4. Set `blob_kzg_commitments` to be the `commitments` field of the blobs bundle constructed when constructing the bid. This field **MUST** have a `hash_tree_root` equal to `header.blob_kzg_commitments_root`.

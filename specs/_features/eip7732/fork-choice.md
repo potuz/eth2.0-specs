@@ -186,10 +186,7 @@ def is_payload_present(store: Store, beacon_block_root: Root) -> bool:
 
 ```python
 def is_parent_node_full(store: Store, block: BeaconBlock) -> bool:
-    parent = store.blocks[block.parent_root]
-    parent_block_hash = block.body.signed_execution_payload_header.message.parent_block_hash
-    message_block_hash = parent.body.signed_execution_payload_header.message.block_hash
-    return parent_block_hash == message_block_hash
+    return block.parent_root in store.execution_payload_states
 ```
 
 ### Modified `get_ancestor` 
