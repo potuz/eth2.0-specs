@@ -17,7 +17,7 @@ This document contains the consensus-layer networking specification for EIP7732.
         - [`beacon_block`](#beacon_block)
         - [`execution_payload`](#execution_payload)
         - [`payload_attestation_message`](#payload_attestation_message)
-        - [`execution_payload_header`](#execution_payload_header)
+        - [`execution_payload_bid`](#execution_payload_bid)
   - [The Req/Resp domain](#the-reqresp-domain)
     - [Messages](#messages)
       - [BeaconBlocksByRange v3](#beaconblocksbyrange-v3)
@@ -58,7 +58,7 @@ class BlobSidecar(Container):
 
 ##### Modified `verify_blob_sidecar_inclusion_proof`
 
-`verify_blob_sidecar_inclusion_proof` is modified in EIP-7732 to account for the fact that the KZG commitments are included in the `ExecutionPayloadEnvelope` and no longer in the beacon block body. 
+`verify_blob_sidecar_inclusion_proof` is modified in EIP-7732 to account for the fact that the KZG commitments are included in the `ExecutionPayloadEnvelope` and no longer in the beacon block body.
 
 ```python
 def verify_blob_sidecar_inclusion_proof(blob_sidecar: BlobSidecar) -> bool:
@@ -68,7 +68,7 @@ def verify_blob_sidecar_inclusion_proof(blob_sidecar: BlobSidecar) -> bool:
     )
     outer_gindex = get_generalized_index(
         BeaconBlockBody,
-        "signed_execution_payload_header",
+        "signed_execution_payload_bid",
         "message",
         "blob_kzg_commitments_root",
     )
@@ -100,19 +100,19 @@ The new topics along with the type of the `data` field of a gossipsub message ar
 
 | Name                          | Message Type                                         |
 |-------------------------------|------------------------------------------------------|
-| `execution_payload_header`    | `SignedExecutionPayloadHeader` [New in EIP-7732] |
+| `execution_payload_bid`       | `SignedExecutionPayloadBid` [New in EIP-7732] |
 | `execution_payload`           | `SignedExecutionPayloadEnvelope` [New in EIP-7732]       |
 | `payload_attestation_message` | `PayloadAttestationMessage` [New in EIP-7732]            |
 
 ##### Global topics
 
-EIP-7732 introduces new global topics for execution header, execution payload and payload attestation.
+EIP-7732 introduces new global topics for execution bid, execution payload and payload attestation.
 
 ###### `beacon_block`
 
 [Modified in EIP-7732]
 
-The *type* of the payload of this topic changes to the (modified) `SignedBeaconBlock` found in [the Beacon Chain changes](./beacon-chain.md). 
+The *type* of the payload of this topic changes to the (modified) `SignedBeaconBlock` found in [the Beacon Chain changes](./beacon-chain.md).
 
 There are no new validations for this topic. However, all validations with regards to the `ExecutionPayload` are removed:
 
@@ -125,10 +125,10 @@ There are no new validations for this topic. However, all validations with regar
     - [IGNORE] The block's parent (defined by `block.parent_root`) passes all validation (including execution node verification of the `block.body.execution_payload`).
 - [REJECT] The block's parent (defined by `block.parent_root`) passes validation.
 
-And instead the following validations are set in place with the alias `header = signed_execution_payload_header.message`:
+And instead the following validations are set in place with the alias `bid = signed_execution_payload_bid.message`:
 
 - If `execution_payload` verification of block's execution payload parent by an execution node **is complete**:
-    - [REJECT] The block's execution payload parent (defined by `header.parent_block_hash`) passes all validation. 
+    - [REJECT] The block's execution payload parent (defined by `bid.parent_block_hash`) passes all validation.
 - [REJECT] The block's parent (defined by `block.parent_root`) passes validation.
 
 ###### `execution_payload`
@@ -139,13 +139,13 @@ The following validations MUST pass before forwarding the `signed_execution_payl
 
 - _[IGNORE]_ The envelope's block root `envelope.block_root` has been seen (via both gossip and non-gossip sources) (a client MAY queue payload for processing once the block is retrieved).
 - _[IGNORE]_ The node has not seen another valid `SignedExecutionPayloadEnvelope` for this block root from this builder.
- 
-Let `block` be the block with `envelope.beacon_block_root`. 
-Let `header` alias `block.body.signed_execution_payload_header.message` (notice that this can be obtained from the `state.signed_execution_payload_header`)
-- _[REJECT]_ `block` passes validation. 
-- _[REJECT]_ `envelope.builder_index == header.builder_index` 
-- if `envelope.payload_withheld == False` then 
-    - _[REJECT]_ `payload.block_hash == header.block_hash`
+
+Let `block` be the block with `envelope.beacon_block_root`.
+Let `bid` alias `block.body.signed_execution_payload_bid.message` (notice that this can be obtained from the `state.signed_execution_payload_bid`)
+- _[REJECT]_ `block` passes validation.
+- _[REJECT]_ `envelope.builder_index == bid.builder_index`
+- if `envelope.payload_withheld == False` then
+    - _[REJECT]_ `payload.block_hash == bid.block_hash`
 - _[REJECT]_ The builder signature, `signed_execution_payload_envelope.signature`, is valid with respect to the builder's public key.
 
 ###### `payload_attestation_message`
@@ -154,27 +154,27 @@ This topic is used to propagate signed payload attestation message.
 
 The following validations MUST pass before forwarding the `payload_attestation_message` on the network, assuming the alias `data = payload_attestation_message.data`:
 
-- _[IGNORE]_ The message's slot is for the current slot (with a `MAXIMUM_GOSSIP_CLOCK_DISPARITY` allowance), i.e. `data.slot == current_slot`. 
-- _[REJECT]_ The message's payload status is a valid status, i.e. `data.payload_status < PAYLOAD_INVALID_STATUS`. 
-- _[IGNORE]_ The `payload_attestation_message` is the first valid message received from the validator with index `payload_attestation_message.validate_index`. 
-- _[IGNORE]_ The message's block `data.beacon_block_root` has been seen (via both gossip and non-gossip sources) (a client MAY queue attestation for processing once the block is retrieved. Note a client might want to request payload after). 
-- _[REJECT]_ The message's block `data.beacon_block_root` passes validation. 
-- _[REJECT]_ The message's validator index is within the payload committee in `get_ptc(state, data.slot)`. The `state` is the head state corresponding to processing the block up to the current slot as determined by the fork choice. 
-- _[REJECT]_ The message's signature of `payload_attestation_message.signature` is valid with respect to the validator index. 
-    
-###### `execution_payload_header`
+- _[IGNORE]_ The message's slot is for the current slot (with a `MAXIMUM_GOSSIP_CLOCK_DISPARITY` allowance), i.e. `data.slot == current_slot`.
+- _[REJECT]_ The message's payload status is a valid status, i.e. `data.payload_status < PAYLOAD_INVALID_STATUS`.
+- _[IGNORE]_ The `payload_attestation_message` is the first valid message received from the validator with index `payload_attestation_message.validate_index`.
+- _[IGNORE]_ The message's block `data.beacon_block_root` has been seen (via both gossip and non-gossip sources) (a client MAY queue attestation for processing once the block is retrieved. Note a client might want to request payload after).
+- _[REJECT]_ The message's block `data.beacon_block_root` passes validation.
+- _[REJECT]_ The message's validator index is within the payload committee in `get_ptc(state, data.slot)`. The `state` is the head state corresponding to processing the block up to the current slot as determined by the fork choice.
+- _[REJECT]_ The message's signature of `payload_attestation_message.signature` is valid with respect to the validator index.
 
-This topic is used to propagate signed bids as `SignedExecutionPayloadHeader`.
+###### `execution_payload_bid`
 
-The following validations MUST pass before forwarding the `signed_execution_payload_header` on the network, assuming the alias `header = signed_execution_payload_header.message`:
+This topic is used to propagate signed bids as `SignedExecutionPayloadBid`.
+
+The following validations MUST pass before forwarding the `signed_execution_payload_bid` on the network, assuming the alias `bid = signed_execution_payload_bid.message`:
 
 - _[IGNORE]_ this is the first signed bid seen with a valid signature from the given builder for this slot.
 - _[IGNORE]_ this bid is the highest value bid seen for the pair of the corresponding slot and the given parent block hash.
-- _[REJECT]_ The signed builder bid, `header.builder_index` is a valid and non-slashed builder index in state.
-- _[IGNORE]_ The signed builder bid value, `header.value`, is less or equal than the builder's balance in state.  i.e. `MIN_BUILDER_BALANCE + header.value < state.builder_balances[header.builder_index]`.
-- _[IGNORE]_ `header.parent_block_hash` is the block hash of a known execution payload in fork choice.
-- _[IGNORE]_ `header.slot` is the current slot or the next slot. 
-- _[REJECT]_ The builder signature, `signed_execution_payload_header_envelope.signature`, is valid with respect to the `header_envelope.builder_index`.
+- _[REJECT]_ The signed builder bid, `bid.builder_index` is a valid and non-slashed builder index in state.
+- _[IGNORE]_ The signed builder bid value, `bid.value`, is less or equal than the builder's balance in state.  i.e. `MIN_BUILDER_BALANCE + bid.value < state.builder_balances[bid.builder_index]`.
+- _[IGNORE]_ `bid.parent_block_hash` is the block hash of a known execution payload in fork choice.
+- _[IGNORE]_ `bid.slot` is the current slot or the next slot.
+- _[REJECT]_ The builder signature, `signed_execution_payload_bid_envelope.signature`, is valid with respect to the `bid_envelope.builder_index`.
 
 ### The Req/Resp domain
 
@@ -210,7 +210,7 @@ Per `context = compute_fork_digest(fork_version, genesis_validators_root)`:
 | `BELLATRIX_FORK_VERSION` | `bellatrix.SignedBeaconBlock` |
 | `CAPELLA_FORK_VERSION`   | `capella.SignedBeaconBlock`   |
 | `DENEB_FORK_VERSION`     | `deneb.SignedBeaconBlock`     |
-| `EIP7732_FORK_VERSION`   | `eip7732.SignedBeaconBlock`   | 
+| `EIP7732_FORK_VERSION`   | `eip7732.SignedBeaconBlock`   |
 
 
 ##### BlobSidecarsByRoot v2

@@ -61,7 +61,7 @@ def compute_fork_version(epoch: Epoch) -> Version:
 
 ### Fork trigger
 
-TBD. This fork is defined for testing purposes, the EIP may be combined with other 
+TBD. This fork is defined for testing purposes, the EIP may be combined with other
 consensus-layer upgrade.
 For now, we assume the condition will be triggered at epoch `EIP7732_FORK_EPOCH`.
 
@@ -113,8 +113,6 @@ def upgrade_to_eip7732(pre: electra.BeaconState) -> BeaconState:
         # Sync
         current_sync_committee=pre.current_sync_committee,
         next_sync_committee=pre.next_sync_committee,
-        # Execution-layer
-        latest_execution_payload_header=ExecutionPayloadHeader(),  # [Modified in EIP-7732]
         # Withdrawals
         next_withdrawal_index=pre.next_withdrawal_index,
         next_withdrawal_validator_index=pre.next_withdrawal_validator_index,
@@ -130,6 +128,7 @@ def upgrade_to_eip7732(pre: electra.BeaconState) -> BeaconState:
         pending_partial_withdrawals=pre.pending_partial_withdrawals,
         pending_consolidations=pre.pending_consolidations,
         # ePBS
+        latest_execution_payload_bid=ExecutionPayloadBid(),  # [New in EIP-7732]
         latest_block_hash=pre.latest_execution_payload_header.block_hash,  # [New in EIP-7732]
         latest_full_slot=pre.slot,  # [New in EIP-7732]
         latest_withdrawals_root=Root(),  # [New in EIP-7732]
