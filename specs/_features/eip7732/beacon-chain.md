@@ -33,7 +33,6 @@
     - [`remove_flag`](#remove_flag)
   - [Predicates](#predicates)
     - [`is_valid_indexed_payload_attestation`](#is_valid_indexed_payload_attestation)
-    - [`is_parent_block_full`](#is_parent_block_full)
   - [Beacon State accessors](#beacon-state-accessors)
     - [`get_ptc`](#get_ptc)
     - [Modified `get_attesting_indices`](#modified-get_attesting_indices)
@@ -41,6 +40,8 @@
     - [`get_indexed_payload_attestation`](#get_indexed_payload_attestation)
 - [Beacon chain state transition function](#beacon-chain-state-transition-function)
   - [Block processing](#block-processing)
+    - [RANDAO](#randao)
+      - [Modified `process_randao`](#modified-process_randao)
     - [Withdrawals](#withdrawals)
       - [Modified `process_withdrawals`](#modified-process_withdrawals)
     - [Execution payload header](#execution-payload-header)
@@ -187,15 +188,15 @@ class BeaconBlockBody(Container):
     graffiti: Bytes32  # Arbitrary data
     # Operations
     proposer_slashings: List[ProposerSlashing, MAX_PROPOSER_SLASHINGS]
-    attester_slashings: List[AttesterSlashing, MAX_ATTESTER_SLASHINGS]
-    attestations: List[Attestation, MAX_ATTESTATIONS]
+    attester_slashings: List[AttesterSlashing, MAX_ATTESTER_SLASHINGS_ELECTRA]
+    attestations: List[Attestation, MAX_ATTESTATIONS_ELECTRA]
     deposits: List[Deposit, MAX_DEPOSITS]
     voluntary_exits: List[SignedVoluntaryExit, MAX_VOLUNTARY_EXITS]
     sync_aggregate: SyncAggregate
     # Execution
     # Removed execution_payload [Removed in EIP-7732]
-    # Removed blob_kzg_commitments [Removed in EIP-7732]
     bls_to_execution_changes: List[SignedBLSToExecutionChange, MAX_BLS_TO_EXECUTION_CHANGES]
+    # Removed blob_kzg_commitments [Removed in EIP-7732]
     # PBS
     signed_execution_payload_header: SignedExecutionPayloadHeader   # [New in EIP-7732]
     payload_attestations: List[PayloadAttestation, MAX_PAYLOAD_ATTESTATIONS]  # [New in EIP-7732]
@@ -274,8 +275,10 @@ class BeaconState(Container):
     pending_partial_withdrawals: List[PendingPartialWithdrawal, PENDING_PARTIAL_WITHDRAWALS_LIMIT]
     pending_consolidations: List[PendingConsolidation, PENDING_CONSOLIDATIONS_LIMIT]
     # PBS
+    latest_execution_payload_root: Root  # [New in EIP-7732]
     latest_block_hash: Hash32  # [New in EIP-7732]
     latest_full_slot: Slot  # [New in EIP-7732]
+    latest_prev_randao: Bytes32  # [New in EIP-7732]
     latest_withdrawals_root: Root  # [New in EIP-7732]
 ```
 
@@ -331,15 +334,6 @@ def is_valid_indexed_payload_attestation(
     domain = get_domain(state, DOMAIN_PTC_ATTESTER, None)
     signing_root = compute_signing_root(indexed_payload_attestation.data, domain)
     return bls.FastAggregateVerify(pubkeys, signing_root, indexed_payload_attestation.signature)
-```
-
-#### `is_parent_block_full`
-
-This function returns true if the last committed payload header was fulfilled with a payload, this can only happen when both beacon block and payload were present. This function must be called on a beacon state before processing the execution payload header in the block. 
-
-```python
-def is_parent_block_full(state: BeaconState) -> bool:
-    return state.latest_execution_payload_header.block_hash == state.latest_block_hash
 ```
 
 ### Beacon State accessors
@@ -428,13 +422,33 @@ The post-state corresponding to a pre-state `state` and a signed execution paylo
 
 ```python
 def process_block(state: BeaconState, block: BeaconBlock) -> None:
+    parent_slot = state.latest_block_header.slot  # [New in EIP-7732]
     process_block_header(state, block)
-    process_withdrawals(state)  # [Modified in EIP-7732]
+    if state.latest_full_slot == parent_slot:  # [Modified in EIP-7732, conditional and removed payload]
+        process_withdrawals(state)  # [Modified in EIP-7732]
     process_execution_payload_header(state, block)  # [Modified in EIP-7732, removed process_execution_payload]
     process_randao(state, block.body)
     process_eth1_data(state, block.body)
     process_operations(state, block.body)  # [Modified in EIP-7732]
     process_sync_aggregate(state, block.body.sync_aggregate)
+```
+
+#### RANDAO
+
+##### Modified `process_randao`
+
+```python
+def process_randao(state: BeaconState, body: BeaconBlockBody) -> None:
+    epoch = get_current_epoch(state)
+    # Verify RANDAO reveal
+    proposer = state.validators[get_beacon_proposer_index(state)]
+    signing_root = compute_signing_root(epoch, get_domain(state, DOMAIN_RANDAO))
+    assert bls.Verify(proposer.pubkey, signing_root, body.randao_reveal)
+    # Cache latest RANDAO mix  [New in EIP-7732]
+    state.latest_prev_randao = get_randao_mix(state, epoch)
+    # Mix in RANDAO reveal
+    mix = xor(get_randao_mix(state, epoch), hash(body.randao_reveal))
+    state.randao_mixes[epoch % EPOCHS_PER_HISTORICAL_VECTOR] = mix
 ```
 
 #### Withdrawals
@@ -445,10 +459,6 @@ def process_block(state: BeaconState, block: BeaconBlock) -> None:
 
 ```python
 def process_withdrawals(state: BeaconState) -> None:
-    # return early if the parent block was empty
-    if not is_parent_block_full(state):
-        return
-
     withdrawals, partial_withdrawals_count = get_expected_withdrawals(state)
     withdrawals_list = List[Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD](withdrawals)
     state.latest_withdrawals_root = hash_tree_root(withdrawals_list)
@@ -642,7 +652,7 @@ def process_execution_payload(state: BeaconState,
         # Verify consistency of the parent hash with respect to the previous execution payload
         assert payload.parent_hash == state.latest_block_hash
         # Verify prev_randao
-        assert payload.prev_randao == get_randao_mix(state, get_current_epoch(state))
+        assert payload.prev_randao == state.latest_prev_randao
         # Verify timestamp
         assert payload.timestamp == compute_timestamp_at_slot(state, state.slot)
         # Verify commitments are under limit
@@ -665,9 +675,10 @@ def process_execution_payload(state: BeaconState,
 
         for_ops(payload.deposit_requests, process_deposit_request)
         for_ops(payload.withdrawal_requests, process_withdrawal_request)
-        for_ops(payload, process_consolidation_request)
+        for_ops(payload.consolidation_requests, process_consolidation_request)
 
         # Cache the execution payload header and proposer
+        state.latest_execution_payload_root = hash_tree_root(payload)
         state.latest_block_hash = payload.block_hash
         state.latest_full_slot = state.slot
 
@@ -725,6 +736,7 @@ def validate_merge_block(block: BeaconBlock) -> None:
 *Note*: The function `initialize_beacon_state_from_eth1` is modified for pure EIP-7732 testing only.
 Modifications include:
 1. Use `EIP7732_FORK_VERSION` as the previous and current fork version.
+2. Initialize `latest_execution_payload_root`, `latest_prev_randao` and `latest_withdrawals_root`.
 
 ```python
 def initialize_beacon_state_from_eth1(eth1_block_hash: Hash32,
@@ -778,6 +790,11 @@ def initialize_beacon_state_from_eth1(eth1_block_hash: Hash32,
 
     # Initialize the execution payload header
     state.latest_execution_payload_header = execution_payload_header
+
+    # Initialize ePBS  [New in EIP-7332]
+    state.latest_execution_payload_root = hash_tree_root(electra.ExecutionPayloadHeader())
+    state.latest_prev_randao = get_randao_mix(state, GENESIS_EPOCH)
+    state.latest_withdrawals_root = hash_tree_root(List[Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD]())
 
     return state
 ```

@@ -202,7 +202,7 @@ def next_sync_committee_gindex_at_slot(slot: Slot) -> GeneralizedIndex:
 ### `is_valid_light_client_header`
 
 ```python
-def is_valid_light_client_header(header: LightClientHeader) -> bool:
+def is_valid_light_client_header(header: LightClientHeader, genesis_time: uint64) -> bool:
     # pylint: disable=unused-argument
     return True
 ```
@@ -332,8 +332,9 @@ A light client maintains its state in a `store` object of type `LightClientStore
 
 ```python
 def initialize_light_client_store(trusted_block_root: Root,
-                                  bootstrap: LightClientBootstrap) -> LightClientStore:
-    assert is_valid_light_client_header(bootstrap.header)
+                                  bootstrap: LightClientBootstrap,
+                                  genesis_time: uint64) -> LightClientStore:
+    assert is_valid_light_client_header(bootstrap.header, genesis_time)
     assert hash_tree_root(bootstrap.header.beacon) == trusted_block_root
 
     assert is_valid_normalized_merkle_branch(
@@ -357,9 +358,9 @@ def initialize_light_client_store(trusted_block_root: Root,
 ## Light client state updates
 
 - A light client receives objects of type `LightClientUpdate`, `LightClientFinalityUpdate` and `LightClientOptimisticUpdate`:
-    - **`update: LightClientUpdate`**: Every `update` triggers `process_light_client_update(store, update, current_slot, genesis_validators_root)` where `current_slot` is the current slot based on a local clock.
-    - **`finality_update: LightClientFinalityUpdate`**: Every `finality_update` triggers `process_light_client_finality_update(store, finality_update, current_slot, genesis_validators_root)`.
-    - **`optimistic_update: LightClientOptimisticUpdate`**: Every `optimistic_update` triggers `process_light_client_optimistic_update(store, optimistic_update, current_slot, genesis_validators_root)`.
+    - **`update: LightClientUpdate`**: Every `update` triggers `process_light_client_update(store, update, current_slot, genesis_time, genesis_validators_root)` where `current_slot` is the current slot based on a local clock.
+    - **`finality_update: LightClientFinalityUpdate`**: Every `finality_update` triggers `process_light_client_finality_update(store, finality_update, current_slot, genesis_time, genesis_validators_root)`.
+    - **`optimistic_update: LightClientOptimisticUpdate`**: Every `optimistic_update` triggers `process_light_client_optimistic_update(store, optimistic_update, current_slot, genesis_time, genesis_validators_root)`.
 - `process_light_client_store_force_update` MAY be called based on use case dependent heuristics if light client sync appears stuck.
 
 ### `validate_light_client_update`
@@ -368,13 +369,14 @@ def initialize_light_client_store(trusted_block_root: Root,
 def validate_light_client_update(store: LightClientStore,
                                  update: LightClientUpdate,
                                  current_slot: Slot,
+                                 genesis_time: uint64,
                                  genesis_validators_root: Root) -> None:
     # Verify sync committee has sufficient participants
     sync_aggregate = update.sync_aggregate
     assert sum(sync_aggregate.sync_committee_bits) >= MIN_SYNC_COMMITTEE_PARTICIPANTS
 
     # Verify update does not skip a sync committee period
-    assert is_valid_light_client_header(update.attested_header)
+    assert is_valid_light_client_header(update.attested_header, genesis_time)
     update_attested_slot = update.attested_header.beacon.slot
     update_finalized_slot = update.finalized_header.beacon.slot
     assert current_slot >= update.signature_slot > update_attested_slot >= update_finalized_slot
@@ -405,7 +407,7 @@ def validate_light_client_update(store: LightClientStore,
             assert update.finalized_header == LightClientHeader()
             finalized_root = Bytes32()
         else:
-            assert is_valid_light_client_header(update.finalized_header)
+            assert is_valid_light_client_header(update.finalized_header, genesis_time)
             finalized_root = hash_tree_root(update.finalized_header.beacon)
         assert is_valid_normalized_merkle_branch(
             leaf=finalized_root,
@@ -488,8 +490,9 @@ def process_light_client_store_force_update(store: LightClientStore, current_slo
 def process_light_client_update(store: LightClientStore,
                                 update: LightClientUpdate,
                                 current_slot: Slot,
+                                genesis_time: uint64,
                                 genesis_validators_root: Root) -> None:
-    validate_light_client_update(store, update, current_slot, genesis_validators_root)
+    validate_light_client_update(store, update, current_slot, genesis_time, genesis_validators_root)
 
     sync_committee_bits = update.sync_aggregate.sync_committee_bits
 
@@ -539,6 +542,7 @@ def process_light_client_update(store: LightClientStore,
 def process_light_client_finality_update(store: LightClientStore,
                                          finality_update: LightClientFinalityUpdate,
                                          current_slot: Slot,
+                                         genesis_time: uint64,
                                          genesis_validators_root: Root) -> None:
     update = LightClientUpdate(
         attested_header=finality_update.attested_header,
@@ -549,7 +553,7 @@ def process_light_client_finality_update(store: LightClientStore,
         sync_aggregate=finality_update.sync_aggregate,
         signature_slot=finality_update.signature_slot,
     )
-    process_light_client_update(store, update, current_slot, genesis_validators_root)
+    process_light_client_update(store, update, current_slot, genesis_time, genesis_validators_root)
 ```
 
 ### `process_light_client_optimistic_update`
@@ -558,6 +562,7 @@ def process_light_client_finality_update(store: LightClientStore,
 def process_light_client_optimistic_update(store: LightClientStore,
                                            optimistic_update: LightClientOptimisticUpdate,
                                            current_slot: Slot,
+                                           genesis_time: uint64,
                                            genesis_validators_root: Root) -> None:
     update = LightClientUpdate(
         attested_header=optimistic_update.attested_header,
@@ -568,5 +573,5 @@ def process_light_client_optimistic_update(store: LightClientStore,
         sync_aggregate=optimistic_update.sync_aggregate,
         signature_slot=optimistic_update.signature_slot,
     )
-    process_light_client_update(store, update, current_slot, genesis_validators_root)
+    process_light_client_update(store, update, current_slot, genesis_time, genesis_validators_root)
 ```

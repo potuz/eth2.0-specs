@@ -9,8 +9,8 @@
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
 - [Introduction](#introduction)
-- [Helper functions](#helper-functions)
-  - [Modified `block_to_light_client_header`](#modified-block_to_light_client_header)
+- [Helpers](#helpers)
+  - [Modified `block_contents_to_light_client_header`](#modified-block_contents_to_light_client_header)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 <!-- /TOC -->
@@ -19,61 +19,56 @@
 
 Execution payload data is updated to account for the Electra upgrade.
 
-## Helper functions
+## Helpers
 
-### Modified `block_to_light_client_header`
+### Modified `block_contents_to_light_client_header`
 
 ```python
-def block_to_light_client_header(block: SignedBeaconBlock) -> LightClientHeader:
-    epoch = compute_epoch_at_slot(block.message.slot)
+def block_contents_to_light_client_header(contents: LightClientBlockContents) -> LightClientHeader:
+    beacon_header = BeaconBlockHeader(
+        slot=contents.block.message.slot,
+        proposer_index=contents.block.message.proposer_index,
+        parent_root=contents.block.message.parent_root,
+        state_root=contents.block.message.state_root,
+        body_root=hash_tree_root(contents.block.message.body),
+    )
 
-    if epoch >= CAPELLA_FORK_EPOCH:
-        payload = block.message.body.execution_payload
-        execution_header = ExecutionPayloadHeader(
-            parent_hash=payload.parent_hash,
-            fee_recipient=payload.fee_recipient,
-            state_root=payload.state_root,
-            receipts_root=payload.receipts_root,
-            logs_bloom=payload.logs_bloom,
-            prev_randao=payload.prev_randao,
-            block_number=payload.block_number,
-            gas_limit=payload.gas_limit,
-            gas_used=payload.gas_used,
-            timestamp=payload.timestamp,
-            extra_data=payload.extra_data,
-            base_fee_per_gas=payload.base_fee_per_gas,
-            block_hash=payload.block_hash,
-            transactions_root=hash_tree_root(payload.transactions),
-            withdrawals_root=hash_tree_root(payload.withdrawals),
-        )
-        if epoch >= DENEB_FORK_EPOCH:
-            execution_header.blob_gas_used = payload.blob_gas_used
-            execution_header.excess_blob_gas = payload.excess_blob_gas
+    epoch = compute_epoch_at_slot(contents.block.message.slot)
+    if epoch < CAPELLA_FORK_EPOCH:
+        # Light client sync protocol only collects execution data from Capella onward
+        return LightClientHeader(beacon=beacon_header)
 
-        # [New in Electra:EIP6110:EIP7002:EIP7251]
-        if epoch >= ELECTRA_FORK_EPOCH:
-            execution_header.deposit_requests_root = hash_tree_root(payload.deposit_requests)
-            execution_header.withdrawal_requests_root = hash_tree_root(payload.withdrawal_requests)
-            execution_header.consolidation_requests_root = hash_tree_root(payload.consolidation_requests)
+    payload = contents.block.message.body.execution_payload
+    execution_branch = ExecutionBranch(
+        compute_merkle_proof(contents.block.message.body, EXECUTION_PAYLOAD_GINDEX))
 
-        execution_branch = ExecutionBranch(
-            compute_merkle_proof(block.message.body, EXECUTION_PAYLOAD_GINDEX))
-    else:
-        # Note that during fork transitions, `finalized_header` may still point to earlier forks.
-        # While Bellatrix blocks also contain an `ExecutionPayload` (minus `withdrawals_root`),
-        # it was not included in the corresponding light client data. To ensure compatibility
-        # with legacy data going through `upgrade_lc_header_to_capella`, leave out execution data.
-        execution_header = ExecutionPayloadHeader()
-        execution_branch = ExecutionBranch()
+    execution_header = ExecutionPayloadHeader(
+        parent_hash=payload.parent_hash,
+        fee_recipient=payload.fee_recipient,
+        state_root=payload.state_root,
+        receipts_root=payload.receipts_root,
+        logs_bloom=payload.logs_bloom,
+        prev_randao=payload.prev_randao,
+        block_number=payload.block_number,
+        gas_limit=payload.gas_limit,
+        gas_used=payload.gas_used,
+        timestamp=payload.timestamp,
+        extra_data=payload.extra_data,
+        base_fee_per_gas=payload.base_fee_per_gas,
+        block_hash=payload.block_hash,
+        transactions_root=hash_tree_root(payload.transactions),
+        withdrawals_root=hash_tree_root(payload.withdrawals),
+    )
+    if epoch >= DENEB_FORK_EPOCH:
+        execution_header.blob_gas_used = payload.blob_gas_used
+        execution_header.excess_blob_gas = payload.excess_blob_gas
+    if epoch >= ELECTRA_FORK_EPOCH:  # [New in Electra:EIP6110:EIP7002:EIP7251]
+        execution_header.deposit_requests_root = hash_tree_root(payload.deposit_requests)
+        execution_header.withdrawal_requests_root = hash_tree_root(payload.withdrawal_requests)
+        execution_header.consolidation_requests_root = hash_tree_root(payload.consolidation_requests)
 
     return LightClientHeader(
-        beacon=BeaconBlockHeader(
-            slot=block.message.slot,
-            proposer_index=block.message.proposer_index,
-            parent_root=block.message.parent_root,
-            state_root=block.message.state_root,
-            body_root=hash_tree_root(block.message.body),
-        ),
+        beacon=beacon_header,
         execution=execution_header,
         execution_branch=execution_branch,
     )

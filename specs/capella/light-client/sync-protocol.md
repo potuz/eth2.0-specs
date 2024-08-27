@@ -58,21 +58,20 @@ class LightClientHeader(Container):
 ### `get_lc_execution_root`
 
 ```python
-def get_lc_execution_root(header: LightClientHeader) -> Root:
+def get_lc_execution_root(header: LightClientHeader, genesis_time: uint64) -> Root:
+    # pylint: disable=unused-argument
     epoch = compute_epoch_at_slot(header.beacon.slot)
+    if epoch < CAPELLA_FORK_EPOCH:
+        return Root()
 
-    if epoch >= CAPELLA_FORK_EPOCH:
-        return hash_tree_root(header.execution)
-
-    return Root()
+    return hash_tree_root(header.execution)
 ```
 
 ### Modified `is_valid_light_client_header`
 
 ```python
-def is_valid_light_client_header(header: LightClientHeader) -> bool:
+def is_valid_light_client_header(header: LightClientHeader, genesis_time: uint64) -> bool:
     epoch = compute_epoch_at_slot(header.beacon.slot)
-
     if epoch < CAPELLA_FORK_EPOCH:
         return (
             header.execution == ExecutionPayloadHeader()
@@ -80,7 +79,7 @@ def is_valid_light_client_header(header: LightClientHeader) -> bool:
         )
 
     return is_valid_merkle_branch(
-        leaf=get_lc_execution_root(header),
+        leaf=get_lc_execution_root(header, genesis_time),
         branch=header.execution_branch,
         depth=floorlog2(EXECUTION_PAYLOAD_GINDEX),
         index=get_subtree_index(EXECUTION_PAYLOAD_GINDEX),

@@ -130,9 +130,11 @@ def upgrade_to_eip7732(pre: electra.BeaconState) -> BeaconState:
         pending_partial_withdrawals=pre.pending_partial_withdrawals,
         pending_consolidations=pre.pending_consolidations,
         # ePBS
+        latest_execution_payload_root=hash_tree_root(pre.latest_execution_payload_header),  # [New in EIP-7732]
         latest_block_hash=pre.latest_execution_payload_header.block_hash,  # [New in EIP-7732]
-        latest_full_slot=pre.slot,  # [New in EIP-7732]
-        latest_withdrawals_root=Root(),  # [New in EIP-7732]
+        latest_full_slot=pre.latest_block_header.slot,  # [New in EIP-7732]
+        latest_prev_randao=electra.get_randao_mix(pre, epoch),  # [New in EIP-7732]
+        latest_withdrawals_root=pre.latest_execution_payload_header.withdrawals_root,  # [New in EIP-7732]
     )
 
     return post

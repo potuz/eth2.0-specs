@@ -118,13 +118,13 @@ def build_empty_block(spec, state, slot=None, proposer_index=None):
     if is_post_altair(spec):
         empty_block.body.sync_aggregate.sync_committee_signature = spec.G2_POINT_AT_INFINITY
 
-    if is_post_eip7732(spec):
-        signed_header = build_empty_signed_execution_payload_header(spec, state)
-        empty_block.body.signed_execution_payload_header = signed_header
-        return empty_block
-
     if is_post_bellatrix(spec):
-        empty_block.body.execution_payload = build_empty_execution_payload(spec, state)
+        payload = build_empty_execution_payload(spec, state)
+        if is_post_eip7732(spec):
+            signed_header = build_empty_signed_execution_payload_header(spec, payload, state)
+            empty_block.body.signed_execution_payload_header = signed_header
+        else:
+            empty_block.body.execution_payload = payload
 
     if is_post_whisk(spec):
         # Whisk opening proof

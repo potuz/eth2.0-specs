@@ -59,6 +59,14 @@ def get_post_eip7732_genesis_execution_payload_header(spec, slot, eth1_block_has
     return header
 
 
+def get_post_eip7732_genesis_execution_payload(spec):
+    return spec.ExecutionPayload(
+        parent_hash=b'\x30' * 32,
+        block_hash=b'\xda' * 32,
+        gas_limit=30000000,
+    )
+
+
 def get_sample_genesis_execution_payload_header(spec, slot,
                                                 eth1_block_hash=None):
     if eth1_block_hash is None:
