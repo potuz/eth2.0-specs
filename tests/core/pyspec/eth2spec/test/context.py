@@ -234,7 +234,7 @@ def medium_validator_set(spec: Spec):
     Helper method to create a medium series of default balances.
     Usage: `@with_custom_state(balances_fn=medium_validator_set, ...)`
     """
-    num_validators = spec.SLOTS_PER_EPOCH * 256
+    num_validators = spec.SLOTS_PER_EPOCH * 20
     return [spec.MAX_EFFECTIVE_BALANCE] * num_validators
 
 
