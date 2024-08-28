@@ -214,7 +214,7 @@ def transition_across_forks(spec, state, to_slot, phases=None, with_block=False,
         epoch = spec.compute_epoch_at_slot(state.slot)
         post_spec, fork_epoch = get_next_fork_transition(spec, epoch, phases)
         if fork_epoch is None or to_epoch < fork_epoch:
-            if with_block and (to_slot == state.slot + 1):
+            if with_block:
                 transition_to(spec, state, to_slot - 1)
                 block = state_transition_with_full_block(
                     spec, state, True, True,

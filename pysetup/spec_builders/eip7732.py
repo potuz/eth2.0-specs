@@ -22,6 +22,11 @@ def concat_generalized_indices(*indices: GeneralizedIndex) -> GeneralizedIndex:
         o = GeneralizedIndex(o * bit_floor(i) + (i - bit_floor(i)))
     return o'''
 
+    @classmethod
+    def hardcoded_ssz_dep_constants(cls) -> Dict[str, str]:
+        return {
+            'EXECUTION_PAYLOAD_GINDEX_EIP7732': 'GeneralizedIndex(101)',
+        }
 
     @classmethod
     def hardcoded_custom_type_dep_constants(cls, spec_object) -> Dict[str, str]:
@@ -31,12 +36,6 @@ def concat_generalized_indices(*indices: GeneralizedIndex) -> GeneralizedIndex:
             'KZG_COMMITMENT_INCLUSION_PROOF_DEPTH_EIP7732':
                 spec_object.preset_vars['KZG_COMMITMENT_INCLUSION_PROOF_DEPTH_EIP7732'].value,
         }
-
-    @classmethod
-    def deprecate_constants(cls) -> Set[str]:
-        return set([
-            'EXECUTION_PAYLOAD_GINDEX',
-        ])
 
     @classmethod
     def deprecate_presets(cls) -> Set[str]:

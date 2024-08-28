@@ -7,6 +7,7 @@ This series of tests provides reference test vectors for validating that a light
 ### `meta.yaml`
 
 ```yaml
+genesis_time: int                 -- integer, decimal
 genesis_validators_root: Bytes32  -- string, hex encoded, with 0x prefix
 trusted_block_root: Bytes32       -- string, hex encoded, with 0x prefix
 bootstrap_fork_digest: string     -- Encoded `ForkDigest`-context of `bootstrap`

@@ -203,10 +203,13 @@ def test_invalid_parent_from_same_slot(spec, state):
     child_block = parent_block.copy()
     child_block.parent_root = state.latest_block_header.hash_tree_root()
 
-    if is_post_eip7732(spec):
-        child_block.body.signed_execution_payload_header = build_empty_signed_execution_payload_header(spec, state)
-    elif is_post_bellatrix(spec):
-        child_block.body.execution_payload = build_empty_execution_payload(spec, state)
+    if is_post_bellatrix(spec):
+        payload = build_empty_execution_payload(spec, state)
+        if is_post_eip7732(spec):
+            signed_header = build_empty_signed_execution_payload_header(spec, payload, state)
+            child_block.body.signed_execution_payload_header = signed_header
+        else:
+            child_block.body.execution_payload = payload
 
     # Show that normal path through transition fails
     failed_state = state.copy()

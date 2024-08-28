@@ -4,7 +4,6 @@ from rlp import encode
 from rlp.sedes import big_endian_int, Binary, List
 
 from eth2spec.test.helpers.keys import privkeys
-from eth2spec.utils.ssz.ssz_impl import hash_tree_root
 from eth2spec.debug.random_value import get_random_bytes_list
 from eth2spec.test.helpers.withdrawals import get_expected_withdrawals
 from eth2spec.test.helpers.forks import (
@@ -234,16 +233,21 @@ def compute_el_block_hash(spec, payload, pre_state):
     )
 
 
-def build_empty_post_eip7732_execution_payload_header(spec, state):
+def build_empty_post_eip7732_execution_payload_header(spec, payload, state):
     if not is_post_eip7732(spec):
         return
-    parent_block_root = hash_tree_root(state.latest_block_header)
+
+    previous_block_header = state.latest_block_header.copy()
+    if previous_block_header.state_root == spec.Root():
+        previous_block_header.state_root = state.hash_tree_root()
+    parent_beacon_block_root = previous_block_header.hash_tree_root()
+
     kzg_list = spec.List[spec.KZGCommitment, spec.MAX_BLOB_COMMITMENTS_PER_BLOCK]()
     return spec.ExecutionPayloadHeader(
-        parent_block_hash=state.latest_block_hash,
-        parent_block_root=parent_block_root,
-        block_hash=spec.Hash32(),
-        gas_limit=spec.uint64(0),
+        parent_block_hash=payload.parent_hash,
+        parent_block_root=parent_beacon_block_root,
+        block_hash=payload.block_hash,
+        gas_limit=payload.gas_limit,
         builder_index=spec.ValidatorIndex(0),
         slot=state.slot,
         value=spec.Gwei(0),
@@ -251,13 +255,42 @@ def build_empty_post_eip7732_execution_payload_header(spec, state):
     )
 
 
-def build_empty_signed_execution_payload_header(spec, state):
+def build_empty_signed_execution_payload_header(spec, payload, state):
     if not is_post_eip7732(spec):
         return
-    message = build_empty_post_eip7732_execution_payload_header(spec, state)
-    privkey = privkeys[0]
+    message = build_empty_post_eip7732_execution_payload_header(spec, payload, state)
+    privkey = privkeys[message.builder_index]
     signature = spec.get_execution_payload_header_signature(state, message, privkey)
     return spec.SignedExecutionPayloadHeader(
+        message=message,
+        signature=signature,
+    )
+
+
+def build_empty_signed_execution_payload_envelope(spec, payload, state):
+    if not is_post_eip7732(spec):
+        return
+
+    block_header = state.latest_block_header.copy()
+    if block_header.state_root == spec.Root():
+        block_header.state_root = state.hash_tree_root()
+    beacon_block_root = block_header.hash_tree_root()
+
+    kzg_list = spec.List[spec.KZGCommitment, spec.MAX_BLOB_COMMITMENTS_PER_BLOCK]()
+    message = spec.ExecutionPayloadEnvelope(
+        payload=payload,
+        builder_index=spec.ValidatorIndex(0),
+        beacon_block_root=beacon_block_root,
+        blob_kzg_commitments=kzg_list,
+        payload_withheld=False,
+    )
+    post_state = state.copy()
+    spec.process_execution_payload(
+        post_state, spec.SignedExecutionPayloadEnvelope(message=message), spec.EXECUTION_ENGINE, verify=False)
+    message.state_root = post_state.hash_tree_root()
+    privkey = privkeys[message.builder_index]
+    signature = spec.get_execution_payload_envelope_signature(state, message, privkey)
+    return spec.SignedExecutionPayloadEnvelope(
         message=message,
         signature=signature,
     )
@@ -271,11 +304,16 @@ def build_empty_execution_payload(spec, state, randao_mix=None):
     timestamp = spec.compute_timestamp_at_slot(state, state.slot)
     empty_txs = spec.List[spec.Transaction, spec.MAX_TRANSACTIONS_PER_PAYLOAD]()
 
+    if is_post_eip7732(spec):
+        parent_hash = state.latest_block_hash
+    else:
+        parent_hash = latest.block_hash
+
     if randao_mix is None:
         randao_mix = spec.get_randao_mix(state, spec.get_current_epoch(state))
 
     payload = spec.ExecutionPayload(
-        parent_hash=latest.block_hash,
+        parent_hash=parent_hash,
         fee_recipient=spec.ExecutionAddress(),
         receipts_root=spec.Bytes32(bytes.fromhex("1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347")),
         logs_bloom=spec.ByteVector[spec.BYTES_PER_LOGS_BLOOM](),  # TODO: zeroed logs bloom for empty logs ok?

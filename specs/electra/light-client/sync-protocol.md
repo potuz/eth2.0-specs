@@ -100,8 +100,11 @@ def next_sync_committee_gindex_at_slot(slot: Slot) -> GeneralizedIndex:
 ### Modified `get_lc_execution_root`
 
 ```python
-def get_lc_execution_root(header: LightClientHeader) -> Root:
+def get_lc_execution_root(header: LightClientHeader, genesis_time: uint64) -> Root:
+    # pylint: disable=unused-argument
     epoch = compute_epoch_at_slot(header.beacon.slot)
+    if epoch < CAPELLA_FORK_EPOCH:
+        return Root()
 
     # [New in Electra]
     if epoch >= ELECTRA_FORK_EPOCH:
@@ -109,7 +112,7 @@ def get_lc_execution_root(header: LightClientHeader) -> Root:
 
     # [Modified in Electra]
     if epoch >= DENEB_FORK_EPOCH:
-        execution_header = deneb.ExecutionPayloadHeader(
+        return hash_tree_root(deneb.ExecutionPayloadHeader(
             parent_hash=header.execution.parent_hash,
             fee_recipient=header.execution.fee_recipient,
             state_root=header.execution.state_root,
@@ -127,37 +130,37 @@ def get_lc_execution_root(header: LightClientHeader) -> Root:
             withdrawals_root=header.execution.withdrawals_root,
             blob_gas_used=header.execution.blob_gas_used,
             excess_blob_gas=header.execution.excess_blob_gas,
-        )
-        return hash_tree_root(execution_header)
+        ))
 
-    if epoch >= CAPELLA_FORK_EPOCH:
-        execution_header = capella.ExecutionPayloadHeader(
-            parent_hash=header.execution.parent_hash,
-            fee_recipient=header.execution.fee_recipient,
-            state_root=header.execution.state_root,
-            receipts_root=header.execution.receipts_root,
-            logs_bloom=header.execution.logs_bloom,
-            prev_randao=header.execution.prev_randao,
-            block_number=header.execution.block_number,
-            gas_limit=header.execution.gas_limit,
-            gas_used=header.execution.gas_used,
-            timestamp=header.execution.timestamp,
-            extra_data=header.execution.extra_data,
-            base_fee_per_gas=header.execution.base_fee_per_gas,
-            block_hash=header.execution.block_hash,
-            transactions_root=header.execution.transactions_root,
-            withdrawals_root=header.execution.withdrawals_root,
-        )
-        return hash_tree_root(execution_header)
-
-    return Root()
+    return hash_tree_root(capella.ExecutionPayloadHeader(
+        parent_hash=header.execution.parent_hash,
+        fee_recipient=header.execution.fee_recipient,
+        state_root=header.execution.state_root,
+        receipts_root=header.execution.receipts_root,
+        logs_bloom=header.execution.logs_bloom,
+        prev_randao=header.execution.prev_randao,
+        block_number=header.execution.block_number,
+        gas_limit=header.execution.gas_limit,
+        gas_used=header.execution.gas_used,
+        timestamp=header.execution.timestamp,
+        extra_data=header.execution.extra_data,
+        base_fee_per_gas=header.execution.base_fee_per_gas,
+        block_hash=header.execution.block_hash,
+        transactions_root=header.execution.transactions_root,
+        withdrawals_root=header.execution.withdrawals_root,
+    ))
 ```
 
 ### Modified `is_valid_light_client_header`
 
 ```python
-def is_valid_light_client_header(header: LightClientHeader) -> bool:
+def is_valid_light_client_header(header: LightClientHeader, genesis_time: uint64) -> bool:
     epoch = compute_epoch_at_slot(header.beacon.slot)
+    if epoch < CAPELLA_FORK_EPOCH:
+        return (
+            header.execution == ExecutionPayloadHeader()
+            and header.execution_branch == ExecutionBranch()
+        )
 
     # [New in Electra:EIP6110:EIP7002:EIP7251]
     if epoch < ELECTRA_FORK_EPOCH:
@@ -169,17 +172,14 @@ def is_valid_light_client_header(header: LightClientHeader) -> bool:
             return False
 
     if epoch < DENEB_FORK_EPOCH:
-        if header.execution.blob_gas_used != uint64(0) or header.execution.excess_blob_gas != uint64(0):
+        if (
+            header.execution.blob_gas_used != uint64(0)
+            or header.execution.excess_blob_gas != uint64(0)
+        ):
             return False
 
-    if epoch < CAPELLA_FORK_EPOCH:
-        return (
-            header.execution == ExecutionPayloadHeader()
-            and header.execution_branch == ExecutionBranch()
-        )
-
     return is_valid_merkle_branch(
-        leaf=get_lc_execution_root(header),
+        leaf=get_lc_execution_root(header, genesis_time),
         branch=header.execution_branch,
         depth=floorlog2(EXECUTION_PAYLOAD_GINDEX),
         index=get_subtree_index(EXECUTION_PAYLOAD_GINDEX),

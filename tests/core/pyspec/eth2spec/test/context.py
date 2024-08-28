@@ -229,10 +229,19 @@ def low_single_balance(spec: Spec):
     return [1]
 
 
+def medium_validator_set(spec: Spec):
+    """
+    Helper method to create a medium series of default balances.
+    Usage: `@with_custom_state(balances_fn=medium_validator_set, ...)`
+    """
+    num_validators = spec.SLOTS_PER_EPOCH * 20
+    return [spec.MAX_EFFECTIVE_BALANCE] * num_validators
+
+
 def large_validator_set(spec: Spec):
     """
     Helper method to create a large series of default balances.
-    Usage: `@with_custom_state(balances_fn=default_balances, ...)`
+    Usage: `@with_custom_state(balances_fn=large_validator_set, ...)`
     """
     num_validators = 2 * spec.SLOTS_PER_EPOCH * spec.MAX_COMMITTEES_PER_SLOT * spec.TARGET_COMMITTEE_SIZE
     return [spec.MAX_EFFECTIVE_BALANCE] * num_validators
@@ -584,6 +593,7 @@ with_deneb_and_later = with_all_phases_from(DENEB)
 with_electra_and_later = with_all_phases_from(ELECTRA)
 with_whisk_and_later = with_all_phases_from(WHISK, all_phases=ALLOWED_TEST_RUNNER_FORKS)
 with_eip7594_and_later = with_all_phases_from(EIP7594, all_phases=ALLOWED_TEST_RUNNER_FORKS)
+with_eip7732_and_later = with_all_phases_from(EIP7732, all_phases=ALLOWED_TEST_RUNNER_FORKS)
 
 with_altair_until_eip7732 = with_all_phases_from_to(ALTAIR, EIP7732)
 with_bellatrix_until_eip7732 = with_all_phases_from_to(BELLATRIX, EIP7732)
